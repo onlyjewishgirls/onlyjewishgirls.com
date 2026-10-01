@@ -5,8 +5,8 @@
   "main": ".open-next/worker.js",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-  // Runs before `wrangler deploy`, `wrangler versions upload` and `wrangler dev`,
-  // so Workers Builds' default deploy command builds the Next.js app first.
+  // Builds the app before local `wrangler dev` / `wrangler deploy`. Workers Builds
+  // ignores this; its dashboard Build command runs `npx opennextjs-cloudflare build`.
   "build": {
     "command": "npx opennextjs-cloudflare build"
   },

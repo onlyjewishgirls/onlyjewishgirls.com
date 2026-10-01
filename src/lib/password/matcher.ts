@@ -53,14 +53,17 @@ function lowerBound(sorted: string[], value: string): number {
  */
 export function createWordSet(words: Iterable<string>, minLength: number): WordSet {
   const unique = new Set<string>();
-  let maxLength = 0;
   for (const raw of words) {
     const word = foldText(raw);
-    if (word.length < minLength) continue;
-    unique.add(word);
-    maxLength = Math.max(maxLength, word.length);
+    if (word.length >= minLength) unique.add(word);
   }
-  const sorted = [...unique].sort();
+  return sortedWordSet([...unique].sort());
+}
+
+/** For a list that is already folded, deduplicated and sorted. */
+export function sortedWordSet(sorted: string[]): WordSet {
+  let maxLength = 0;
+  for (const word of sorted) if (word.length > maxLength) maxLength = word.length;
   return {
     has: (w) => sorted[lowerBound(sorted, w)] === w,
     hasPrefix: (p) => {

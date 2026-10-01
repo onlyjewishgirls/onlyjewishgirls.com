@@ -37,7 +37,9 @@ All in [`src/lib/password/`](src/lib/password). The sign-up form shows a live ch
 | No personal info | no 3+ character piece of the first, middle or last name, username, or any part of the email (a 2-letter name like "Li" is blocked whole), and no 4+ digit run from the phone number. Look-alikes count here too. |
 | No sequences | `abc`/`cba`/`123`/`987`, keyboard rows `qwe`/`asd`/`zxc`/`!@#`, keyboard columns `1qaz`/`wsx`, number-pad lines `147`/`159`, repeats `aaa`, repeated chunks `abab`/`1212`, skip-counting `2468`/`aceg` |
 
-Passwords are hashed with scrypt at N=2¹⁴, r=8, p=5, one of OWASP's recommended settings. It uses 16 MiB because a Worker gets only 128 MB of memory, shared across requests.
+Passwords are hashed with PBKDF2-HMAC-SHA256 at 100,000 iterations, using the Workers runtime's built-in WebCrypto. 100,000 is the most it allows in one call, and it costs about 15 ms of CPU, which keeps sign-in within the Workers Free plan. The password rules carry most of the weight against guessing.
+
+The dictionary is precomputed in [`src/server/dictionary-words.json`](src/server/dictionary-words.json), so the Worker doesn't spend ~80 ms building it. A unit test fails if that file falls out of date; `npm run dictionary` regenerates it from [`scripts/dictionary-source.ts`](scripts/dictionary-source.ts).
 
 ## Two-step verification
 
@@ -73,12 +75,12 @@ Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `YOM_TOV_
 
 ## Deploying (Cloudflare)
 
-Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker. Its deploy step runs `wrangler deploy`, which first runs the build command in [`wrangler.jsonc`](wrangler.jsonc) (`opennextjs-cloudflare build`). The D1 database `onlyjewishgirls` is bound as `DB`.
+Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker, and the D1 database `onlyjewishgirls` is bound as `DB`.
 
 One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewishgirlsdotcom**:
 
-1. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
-2. **Plan:** password hashing needs about 0.2 s of CPU per sign-in or sign-up. That needs **Workers Paid**; the Free plan allows only 10 ms per request.
+1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
+2. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
 3. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
 
 Preview deployments use the same D1 database as production unless you give previews their own binding.
@@ -89,7 +91,7 @@ Preview deployments use the same D1 database as production unless you give previ
 src/lib/password/      password rules (shared by browser + server)
 src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
 src/lib/validation.ts  registration field rules (shared)
-src/server/            D1 access + schema, sessions, scrypt, TOTP, WebAuthn, rate limits
+src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits
 src/app/api/           auth + MFA endpoints
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /home
 tests/unit, tests/e2e  Vitest and Playwright

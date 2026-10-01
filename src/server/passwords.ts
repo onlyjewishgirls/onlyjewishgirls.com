@@ -1,41 +1,54 @@
 import "server-only";
-import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { normalizePassword } from "@/lib/password/policy";
 
 /**
- * One of OWASP's equivalent scrypt settings: N=2^14 (16 MiB), r=8, p=5.
- * The 128 MiB setting doesn't fit in a Cloudflare Worker (128 MB per isolate,
- * shared by concurrent requests), so this trades memory for more passes.
+ * PBKDF2-HMAC-SHA256 with 100,000 iterations, via WebCrypto (native in Workers).
+ * 100,000 is the most Workers' WebCrypto allows in one call, and it costs about
+ * 15 ms of CPU, which keeps sign-in within the Workers Free plan. The password
+ * rules (16+ characters, no words, no sequences) carry most of the weight against
+ * guessing.
  */
-const PARAMS = { N: 2 ** 14, r: 8, p: 5 };
-const KEY_LENGTH = 32;
+const SCHEME = "pbkdf2-sha256";
+const ITERATIONS = 100_000;
+const KEY_BITS = 256;
 
-function derive(password: string, salt: Buffer, params: typeof PARAMS): Promise<Buffer> {
-  const options: ScryptOptions = { ...params, maxmem: 256 * params.N * params.r };
-  return new Promise((resolve, reject) =>
-    scrypt(normalizePassword(password), salt, KEY_LENGTH, options, (err, key) => (err ? reject(err) : resolve(key))),
+async function derive(password: string, salt: Uint8Array<ArrayBuffer>, iterations: number): Promise<Uint8Array> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(normalizePassword(password)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
+  const bits = await crypto.subtle.deriveBits({ name: "PBKDF2", hash: "SHA-256", salt, iterations }, key, KEY_BITS);
+  return new Uint8Array(bits);
+}
+
+function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
+  return diff === 0;
+}
+
+/** Format: pbkdf2-sha256$iterations$salt$hash, so the cost can be raised later without breaking old hashes. */
+export async function hashPassword(password: string): Promise<string> {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const hash = await derive(password, salt, ITERATIONS);
+  return [SCHEME, ITERATIONS, Buffer.from(salt).toString("base64url"), Buffer.from(hash).toString("base64url")].join(
+    "$",
   );
 }
 
-/** Format: scrypt$N$r$p$salt$hash so parameters can be raised later without breaking old hashes. */
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16);
-  const key = await derive(password, salt, PARAMS);
-  return ["scrypt", PARAMS.N, PARAMS.r, PARAMS.p, salt.toString("base64url"), key.toString("base64url")].join("$");
-}
-
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [scheme, n, r, p, salt, hash] = stored.split("$");
-  if (scheme !== "scrypt") return false;
-  const expected = Buffer.from(hash, "base64url");
-  const key = await derive(password, Buffer.from(salt, "base64url"), { N: Number(n), r: Number(r), p: Number(p) });
-  return key.length === expected.length && timingSafeEqual(key, expected);
+  const [scheme, iterations, salt, hash] = stored.split("$");
+  if (scheme !== SCHEME || !salt || !hash) return false;
+  const expected = new Uint8Array(Buffer.from(hash, "base64url"));
+  const actual = await derive(password, new Uint8Array(Buffer.from(salt, "base64url")), Number(iterations));
+  return constantTimeEqual(actual, expected);
 }
-
-let dummyHash: Promise<string> | undefined;
 
 /** Spend the same time as a real check so response timing doesn't reveal which accounts exist. */
 export async function burnPasswordCheck(password: string): Promise<void> {
-  dummyHash ??= hashPassword(randomBytes(16).toString("hex"));
-  await verifyPassword(password, await dummyHash);
+  await derive(password, new Uint8Array(16), ITERATIONS);
 }

@@ -12,6 +12,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "dictionary": "UPDATE_DICTIONARY=1 vitest run tests/unit/dictionary.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
