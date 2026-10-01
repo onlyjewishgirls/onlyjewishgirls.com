@@ -96,7 +96,7 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 
 1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
 2. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
-3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty.
+3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty. Dashboard variables survive deploys because `wrangler.jsonc` sets `keep_vars: true`; without it, each `wrangler deploy` would delete them.
 4. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
 
 ## Layout

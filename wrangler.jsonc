@@ -32,6 +32,9 @@
       }
     ]
   },
+  // EMAIL_FROM and other plain variables are managed in the dashboard. Without this,
+  // every `wrangler deploy` deletes them (secrets are always kept).
+  "keep_vars": true,
   "observability": {
     "enabled": true
   }
