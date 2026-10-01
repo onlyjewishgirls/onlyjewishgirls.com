@@ -75,15 +75,13 @@ Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `YOM_TOV_
 
 ## Deploying (Cloudflare)
 
-Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker, and the D1 database `onlyjewishgirls` is bound as `DB`.
+Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker, and the D1 database `onlyjewishgirls` is bound as `DB`. Pull-request previews (`wrangler preview`) use a separate database, `onlyjewishgirls-preview` (the `previews` block in `wrangler.jsonc`), so testing never touches real accounts.
 
 One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewishgirlsdotcom**:
 
 1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
 2. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
 3. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
-
-Preview deployments use the same D1 database as production unless you give previews their own binding.
 
 ## Layout
 

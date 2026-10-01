@@ -22,7 +22,7 @@ export function appSecret(): Buffer {
   const decoded = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
   if (decoded.length !== 32) throw new Error("APP_SECRET must be 32 bytes, base64 or hex encoded");
   secret = decoded;
-  return secret;
+  return decoded;
 }
 
 /**
