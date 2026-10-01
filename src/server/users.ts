@@ -28,6 +28,10 @@ export interface User {
   recoveryCodesCreatedAt: number | null;
   streak: StreakState;
   streakLastEvent: StreakEvent | null;
+  /** Approximate location, for Shabbat / Yom Tov times. */
+  latitude: number | null;
+  longitude: number | null;
+  country: string | null;
   createdAt: number;
 }
 
@@ -53,6 +57,9 @@ interface UserRow {
   streak_last_counted_date: string | null;
   streak_started_at: number | null;
   streak_last_event: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  country: string | null;
   created_at: number;
 }
 
@@ -82,6 +89,9 @@ function toUser(row: UserRow | null): User | null {
       startedAt: row.streak_started_at,
     },
     streakLastEvent: row.streak_last_event ? JSON.parse(row.streak_last_event) : null,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    country: row.country,
     createdAt: row.created_at,
   };
 }
@@ -139,6 +149,19 @@ export async function createUser(u: NewUser, now: number): Promise<number> {
 
 export async function updateTimeZone(userId: number, timeZone: string) {
   await run("UPDATE users SET time_zone = ? WHERE id = ?", timeZone, userId);
+}
+
+export async function updateLocation(
+  userId: number,
+  location: { latitude: number | null; longitude: number | null; country: string | null },
+) {
+  await run(
+    "UPDATE users SET latitude = ?, longitude = ?, country = ? WHERE id = ?",
+    location.latitude,
+    location.longitude,
+    location.country,
+    userId,
+  );
 }
 
 export async function saveStreak(userId: number, s: StreakState, event: StreakEvent | null) {
@@ -281,4 +304,54 @@ export async function consumeRecoveryCode(userId: number, hash: string, now: num
 
 export async function hasRecoveryCodes(userId: number): Promise<boolean> {
   return !!(await first("SELECT 1 FROM recovery_codes WHERE user_id = ? AND used_at IS NULL", userId));
+}
+
+// ---- Password resets ----
+
+/** Stores a new reset token, replacing any earlier unused ones for the user. */
+export async function createPasswordReset(userId: number, tokenHash: string, now: number, expiresAt: number) {
+  await batch([
+    ["DELETE FROM password_resets WHERE user_id = ?", userId],
+    [
+      "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+      tokenHash,
+      userId,
+      now,
+      expiresAt,
+    ],
+  ]);
+}
+
+/** The user a reset token belongs to, if the token is unused and unexpired. */
+export async function findPasswordResetUser(tokenHash: string, now: number): Promise<User | null> {
+  const row = await first<{ user_id: number }>(
+    "SELECT user_id FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?",
+    tokenHash,
+    now,
+  );
+  return row ? findUserById(row.user_id) : null;
+}
+
+/**
+ * Atomically marks the token used; false if it was already used or expired
+ * (so two tabs submitting the same link can't both succeed).
+ */
+export async function claimPasswordReset(tokenHash: string, userId: number, now: number): Promise<boolean> {
+  const { changes } = await run(
+    "UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND user_id = ? AND used_at IS NULL AND expires_at > ?",
+    now,
+    tokenHash,
+    userId,
+    now,
+  );
+  return changes === 1;
+}
+
+/** Sets the new password and signs the user out everywhere. */
+export async function resetPassword(userId: number, passwordHash: string) {
+  await batch([
+    ["UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, userId],
+    ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
+    ["DELETE FROM sessions WHERE user_id = ?", userId],
+  ]);
 }

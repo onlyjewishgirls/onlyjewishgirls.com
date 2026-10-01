@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { base32Decode, hotp, totpStep } from "../../src/server/totp";
@@ -200,15 +201,67 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
   });
 
   await test.step("missing the deadline starts over", async () => {
-    // 100 hours is past even a 3-day Yom Tov's leeway.
+    // 200 hours is past even a 3-day Yom Tov's leeway (at most about 30 + 75 + 12 hours).
     sql(
-      `UPDATE users SET streak_last_activity_at = ${Date.now() - 100 * 3_600_000},
+      `UPDATE users SET streak_last_activity_at = ${Date.now() - 200 * 3_600_000},
        streak_last_counted_date = '2000-01-01' WHERE username = '${user.username}'`,
     );
     await page.reload();
     await expect(page.getByTestId("streak-count")).toHaveText("1");
     await expect(page.getByTestId("streak-banner")).toContainText("Your 6-day streak ended");
     await expect(page.getByText("Longest streak: 6")).toBeVisible();
+  });
+
+  await test.step("forgot password: the emailed link works once, signs out everywhere, and MFA still applies", async () => {
+    // Still signed in from the previous step.
+    await page.goto("/forgot-password");
+    await page.getByLabel("Username or email").fill(user.email);
+    await page.getByRole("button", { name: "Email me a reset link" }).click();
+    await expect(page.getByText("If that account exists, we've emailed a link")).toBeVisible();
+
+    // The real token only exists in the email, so plant one we know.
+    const token = `e2e-${Date.now()}`;
+    const tokenHash = createHash("sha256").update(`password-reset:${token}`).digest("hex");
+    sql(
+      `INSERT INTO password_resets (token_hash, user_id, created_at, expires_at)
+       SELECT '${tokenHash}', id, ${Date.now()}, ${Date.now() + 30 * 60_000} FROM users WHERE username = '${user.username}'`,
+    );
+    await page.goto(`/reset-password?token=${token}`);
+    await expect(page.getByRole("heading", { name: "Choose a new password" })).toBeVisible();
+
+    const rule = (id: string) => page.locator(`[data-rule="${id}"]`);
+    await page.locator("#password").fill("Rivka#7Xq!Wm9Pd$");
+    await expect(rule("personal")).toHaveAttribute("data-state", "bad");
+
+    await page.locator("#password").fill(user.password);
+    await page.locator("#confirmPassword").fill(user.password);
+    await page.getByRole("button", { name: "Save new password" }).click();
+    await expect(page.getByText("That's already your password")).toBeVisible();
+
+    const newPassword = "Tn4&Wb!Qj8Hy%Lc5";
+    await page.locator("#password").fill(newPassword);
+    for (const id of ["length", "uppercase", "lowercase", "symbol", "number", "dictionary", "personal", "sequence"]) {
+      await expect(rule(id)).toHaveAttribute("data-state", "ok");
+    }
+    await page.locator("#confirmPassword").fill(newPassword);
+    await screenshot(page, "4-reset-password");
+    await page.getByRole("button", { name: "Save new password" }).click();
+    await expect(page).toHaveURL("/login?reset=1");
+    await expect(page.getByText("Password changed.")).toBeVisible();
+
+    // Every session was ended, including this browser's.
+    await page.goto("/home");
+    await expect(page).toHaveURL("/login");
+
+    await page.goto(`/reset-password?token=${token}`);
+    await expect(page.getByRole("heading", { name: "Link expired" })).toBeVisible();
+
+    await signIn(page, user.username, user.password);
+    await expect(page.getByText("Incorrect username/email or password.")).toBeVisible();
+    await signIn(page, user.username, newPassword);
+    await expect(page).toHaveURL("/login/verify");
+    await page.getByRole("button", { name: /Use my passkey/ }).click();
+    await expect(page).toHaveURL("/home");
   });
 
   expect(consoleErrors).toEqual([]);
@@ -237,6 +290,41 @@ test("usernames and emails must be unique", async ({ request }) => {
   const body = await res.json();
   expect(body.fields.username).toBe("That username is taken");
   expect(body.fields.email).toBe("An account with this email already exists");
+});
+
+test("forgot password gives the same answer whether or not the account exists", async ({ request }) => {
+  const headers = { Origin: "http://localhost:3100" };
+  const password = "Gv6!Mz#Rt2Kw&Jp8";
+  await request.post("/api/auth/register", {
+    headers,
+    data: {
+      firstName: "Leah",
+      middleName: "",
+      noMiddleName: true,
+      lastName: "Katz",
+      email: "leah@example.com",
+      username: "leah_k",
+      phoneCountry: "US",
+      phone: "212-555-0123",
+      password,
+      confirmPassword: password,
+    },
+  });
+  const ask = async (identifier: string) => {
+    const res = await request.post("/api/auth/forgot-password", { headers, data: { identifier } });
+    return { status: res.status(), body: await res.json() };
+  };
+  const real = await ask("leah@example.com");
+  expect(real.status).toBe(200);
+  expect(await ask("nobody@example.com")).toEqual(real);
+  expect(await ask("no_such_user")).toEqual(real);
+
+  const reset = await request.post("/api/auth/reset-password", {
+    headers,
+    data: { token: "not-a-real-token", password: "Hx3!Lq@Zn7Vb#Wd5", confirmPassword: "Hx3!Lq@Zn7Vb#Wd5" },
+  });
+  expect(reset.status()).toBe(400);
+  expect((await reset.json()).expired).toBe(true);
 });
 
 test("cross-site requests are blocked", async ({ request }) => {

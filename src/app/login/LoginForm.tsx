@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
 import { FormError } from "@/components/AuthCard";
@@ -44,9 +45,14 @@ export function LoginForm() {
         />
       </div>
       <div>
-        <label htmlFor="password" className="label">
-          Password
-        </label>
+        <div className="flex items-baseline justify-between">
+          <label htmlFor="password" className="label">
+            Password
+          </label>
+          <Link href="/forgot-password" className="link text-sm">
+            Forgot password?
+          </Link>
+        </div>
         <input
           id="password"
           name="password"

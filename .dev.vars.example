@@ -6,3 +6,10 @@ APP_SECRET=
 
 # Optional. Lets one passkey work on both onlyjewishgirls.com and www.onlyjewishgirls.com.
 # WEBAUTHN_RP_ID=onlyjewishgirls.com
+
+# Optional. Sends password-reset emails through Resend. Without these, emails are printed to the terminal.
+# EMAIL_API_KEY=re_...
+# EMAIL_FROM=OnlyJewishGirls <no-reply@onlyjewishgirls.com>
+
+# Optional. Base URL for links in emails. Defaults to the address the request came in on.
+# PUBLIC_ORIGIN=https://onlyjewishgirls.com

@@ -1,6 +1,6 @@
 # onlyjewishgirls.com
 
-Sign-up, sign-in with mandatory two-step verification (passkey + authenticator app), and a Yom Tov–aware 🔥 daily streak. The rest of the site is a "coming soon" placeholder for now.
+Sign-up, sign-in with mandatory two-step verification (passkey + authenticator app), forgot password, and a Shabbat- and Yom Tov–aware 🔥 daily streak. The rest of the site is a "coming soon" placeholder for now.
 
 Built with Next.js 16 (App Router), TypeScript and Tailwind CSS 4. It runs on a Cloudflare Worker via [OpenNext](https://opennext.js.org/cloudflare), with data in Cloudflare D1. Passkeys use [SimpleWebAuthn](https://simplewebauthn.dev) and the Jewish calendar comes from [`@hebcal/core`](https://github.com/hebcal/hebcal-es6).
 
@@ -16,7 +16,7 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 | Command | What it does |
 | --- | --- |
 | `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation |
-| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break. If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password. If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
 | `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 
@@ -57,21 +57,36 @@ Safeguards:
 - If an account already has any second factor, the password alone can't add another one.
 - The session ID is replaced at each privilege step.
 - Each session gets 5 wrong second-factor tries, and each account gets 10 wrong tries per hour.
-- Rate limits on login, sign-up and the password checker.
+- Rate limits on login, sign-up, forgot password and the password checker.
 - Every POST checks `Origin` (CSRF protection), and cookies are `HttpOnly` + `SameSite=Lax` (`__Host-` + `Secure` everywhere except localhost).
+
+## Forgot password
+
+**Forgot password?** on the sign-in page asks for a username or email and emails a reset link.
+
+- The answer is the same whether or not the account exists, and the email is sent after the response, so neither the message nor the timing gives away who has an account.
+- The link is single-use and expires after 30 minutes. Only a SHA-256 hash of its token is stored. Asking again replaces the old link. Each account gets at most 3 emails an hour.
+- The new password must pass every rule above (checked against the account's own name, username, email and phone), and it can't be the current password.
+- Saving it signs the account out on every device and emails a "your password was changed" notice.
+- **It never skips two-step verification.** After a reset you still need your passkey, authenticator app or a recovery code, so someone who gets into your email still can't get into your account.
+
+Email goes through [Resend](https://resend.com). Until `EMAIL_API_KEY` and `EMAIL_FROM` are set (see [Deploying](#deploying-cloudflare)), local development prints the email, including the link, to the terminal. In production a missing key is logged as an error.
 
 ## 🔥 Streak
 
 The engine is [`src/lib/streak/engine.ts`](src/lib/streak/engine.ts), a set of pure functions with tests against the real 2026–27 calendar.
 
-- **Check in at least once every 30 hours.** Signing in, or opening the site while signed in, counts. 30 hours covers a regular Shabbat if you check in Friday afternoon and again after Havdalah.
-- **2-day Yom Tov: +24 h. 3-day Yom Tov (Yom Tov running into Shabbat): +48 h.** The extension applies when the Yom Tov starts inside your window, so you still need to check in on Erev Yom Tov. Only days still ahead count: checking in on day 1 of a 3-day block gives +24 h.
-- **Diaspora vs Israel** comes from the user's time zone (`Asia/Jerusalem` = Israel). Example: Pesach 5787 is a 3-day block in the Diaspora (Thu–Fri–Shabbat) and no extension in Israel.
+- **Check in at least once every 30 hours.** Signing in, or opening the site while signed in, counts.
+- **Your deadline never falls on Shabbat or Yom Tov, wherever you are.** If Shabbat or Yom Tov (including a 2- or 3-day Yom Tov) starts before your deadline, the deadline moves to **12 hours after it ends**. You never need to check in during it or race to check in right after Havdalah. If another one starts within those 12 hours, the deadline moves past that one too.
+- **Times are local.** Shabbat and Yom Tov run from 40 minutes before sunset (candle lighting, with margin for places that light earlier) until 72 minutes after sunset (later than any common custom for nightfall), using sunset where you are. The location is Cloudflare's city-level estimate for the request, rounded to about 1 km, and used only when its time zone matches your browser's. If it doesn't (a VPN, for example) or isn't known, the app plays it safe: from noon on Erev Shabbat/Yom Tov until 3 AM after it ends. Near the poles, where the sun may not set, the same safe window is used.
+- **Diaspora vs Israel** is based on that location (or an Israeli time zone). Example: Pesach 5787 is one 3-day block in the Diaspora (Thu–Fri–Shabbat), while in Israel it's Yom Tov on Thursday, a weekday, then Shabbat.
 - **The count goes up once per new calendar day** you check in on. Shabbat/Yom Tov days you skipped over are added automatically, so keeping Shabbat never costs a day.
 - **Miss the deadline** and the next check-in starts again at 1. Your longest streak is kept.
 - A ⌛ shows when less than 4 hours are left.
 
-Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `YOM_TOV_EXTRA_DAY_HOURS`, `AT_RISK_HOURS`).
+The unit tests sweep a full year in New York, Jerusalem, London, Melbourne, Los Angeles, Tromsø (polar) and an unknown location, and check that no deadline ever lands inside Shabbat or Yom Tov.
+
+Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `AFTER_HOLY_DAY_HOURS`, `AT_RISK_HOURS`) and the calendar (`STARTS_BEFORE_SUNSET_MINUTES`, `ENDS_AFTER_SUNSET_MINUTES`).
 
 ## Deploying (Cloudflare)
 
@@ -81,7 +96,8 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 
 1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
 2. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
-3. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
+3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty.
+4. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
 
 ## Layout
 
@@ -89,8 +105,8 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 src/lib/password/      password rules (shared by browser + server)
 src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
 src/lib/validation.ts  registration field rules (shared)
-src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits
+src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email
 src/app/api/           auth + MFA endpoints
-src/app/               pages: /register, /login, /login/verify, /setup-mfa, /home
+src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password, /home
 tests/unit, tests/e2e  Vitest and Playwright
 ```

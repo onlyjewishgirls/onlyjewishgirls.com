@@ -1,23 +1,24 @@
 import "server-only";
-import { holyDayLookup, observesIsraelSchedule } from "@/lib/streak/calendar";
+import { streakCalendar, type Place } from "@/lib/streak/calendar";
 import { localDate } from "@/lib/streak/dates";
 import { getStreakStatus, recordActivity, type StreakStatus } from "@/lib/streak/engine";
+import { syncPlace } from "./location";
 import { saveStreak, type StreakEvent, type User } from "./users";
 
 export interface StreakCheckIn {
   status: StreakStatus;
   /** What happened to the streak today (started / continued / restarted), if anything. */
   today: StreakEvent | null;
-  israel: boolean;
+  place: Place;
   /** The moment of the check-in. */
   now: number;
 }
 
 /** Records that a fully signed-in user showed up, and returns their streak. */
 export async function checkIn(user: User, now = Date.now()): Promise<StreakCheckIn> {
-  const israel = observesIsraelSchedule(user.timeZone);
-  const holyDays = holyDayLookup(israel);
-  const result = recordActivity(user.streak, now, user.timeZone, holyDays);
+  const place = await syncPlace(user);
+  const calendar = streakCalendar(place);
+  const result = recordActivity(user.streak, now, calendar);
   const date = localDate(now, user.timeZone);
 
   let today = user.streakLastEvent?.date === date ? user.streakLastEvent : null;
@@ -29,5 +30,5 @@ export async function checkIn(user: User, now = Date.now()): Promise<StreakCheck
     await saveStreak(user.id, result.state, user.streakLastEvent);
   }
 
-  return { status: getStreakStatus(result.state, now, user.timeZone, holyDays), today, israel, now };
+  return { status: getStreakStatus(result.state, now, calendar), today, place, now };
 }

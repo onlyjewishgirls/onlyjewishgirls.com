@@ -7,7 +7,9 @@ export interface StreakCardProps {
   count: number;
   longest: number;
   deadline: number | null;
-  leeway: { names: string[]; extraHours: number }[];
+  /** Shabbat / Yom Tov periods the deadline was moved past. */
+  leeway: { names: string[] }[];
+  graceHours: number;
   /** The streak change from today's first check-in. */
   today: { outcome: Exclude<ActivityOutcome, "same-day">; added: number; previousCount: number } | null;
   serverNow: number;
@@ -103,7 +105,8 @@ export function StreakCard(props: StreakCardProps) {
       {alive &&
         props.leeway.map((l) => (
           <p key={l.names.join()} className="mx-auto mt-3 max-w-md text-sm text-muted">
-            Includes <strong>+{l.extraHours}h Yom Tov leeway</strong> for {l.names.join(" · ")}. Gut Yom Tov!
+            Moved past <strong>{l.names.join(" · ")}</strong>: your deadline is {props.graceHours} hours after it
+            ends, never during it.
           </p>
         ))}
 

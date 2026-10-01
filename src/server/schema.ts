@@ -68,4 +68,18 @@ export const MIGRATIONS: string[][] = [
       reset_at INTEGER NOT NULL
     )`,
   ],
+  [
+    // Approximate location (from Cloudflare) for Shabbat / Yom Tov times.
+    "ALTER TABLE users ADD COLUMN latitude REAL",
+    "ALTER TABLE users ADD COLUMN longitude REAL",
+    "ALTER TABLE users ADD COLUMN country TEXT",
+    `CREATE TABLE IF NOT EXISTS password_resets (
+      token_hash  TEXT PRIMARY KEY,                -- SHA-256 of the emailed token
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      used_at     INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS password_resets_user ON password_resets(user_id)`,
+  ],
 ];
