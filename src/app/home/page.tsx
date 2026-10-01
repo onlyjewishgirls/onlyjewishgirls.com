@@ -16,7 +16,7 @@ function formatDates(dates: string[]) {
 
 export default async function HomePage() {
   const { user } = await requirePage("/home");
-  const { status, today, israel, now } = checkIn(user);
+  const { status, today, israel, now } = await checkIn(user);
   const upcoming = nextMultiDayYomTov(localDate(now, user.timeZone), israel);
 
   return (

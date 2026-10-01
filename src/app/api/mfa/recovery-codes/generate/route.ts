@@ -12,13 +12,13 @@ const CODE_COUNT = 10;
 export const POST = api(async () => {
   const ctx = await getAuth();
   if (!ctx || ctx.session.stage !== "full") return jsonError(401, "Please sign in again.", { next: "/login" });
-  const mfa = mfaState(ctx.user);
+  const mfa = await mfaState(ctx.user);
   if (mfa.passkeys === 0 || !mfa.totp) return jsonError(400, "Set up a passkey and an authenticator app first.");
 
   const codes = Array.from({ length: CODE_COUNT }, () => {
     const raw = randomCode(10);
     return `${raw.slice(0, 5)}-${raw.slice(5)}`;
   });
-  replaceRecoveryCodes(ctx.user.id, codes.map((c) => sha256(normalizeRecoveryCode(c))), Date.now());
+  await replaceRecoveryCodes(ctx.user.id, codes.map((c) => sha256(normalizeRecoveryCode(c))), Date.now());
   return NextResponse.json({ codes, next: "/home" });
 });

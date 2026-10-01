@@ -12,15 +12,18 @@ export interface MfaState {
   complete: boolean;
 }
 
-export function mfaState(user: User): MfaState {
-  const passkeys = listPasskeys(user.id).length;
+export async function mfaState(user: User): Promise<MfaState> {
+  const [passkeys, unusedRecoveryCodes] = await Promise.all([
+    listPasskeys(user.id).then((list) => list.length),
+    hasRecoveryCodes(user.id),
+  ]);
   const totp = user.totpEnabledAt !== null;
   const recoveryCodes = user.recoveryCodesCreatedAt !== null;
   return {
     passkeys,
     totp,
     recoveryCodes,
-    factors: (passkeys > 0 ? 1 : 0) + (totp ? 1 : 0) + (hasRecoveryCodes(user.id) ? 1 : 0),
+    factors: (passkeys > 0 ? 1 : 0) + (totp ? 1 : 0) + (unusedRecoveryCodes ? 1 : 0),
     complete: passkeys > 0 && totp && recoveryCodes,
   };
 }

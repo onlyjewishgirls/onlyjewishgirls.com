@@ -16,6 +16,6 @@ export const POST = api(async (req) => {
   const step = verifyTotp(decrypt(user.totpPendingSecretEnc), code, now, null);
   if (step === null) return jsonError(400, "That code didn't match. Check your phone's clock and try the newest code.");
 
-  enableTotp(user.id, step, now);
+  await enableTotp(user.id, step, now);
   return afterEnrollment(guard.ctx);
 });

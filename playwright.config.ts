@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = 3100;
+/** Local D1 database (and other Wrangler state) for the test run; wiped at start. */
 export const E2E_DATA_DIR = ".data/e2e";
 
 export default defineConfig({
@@ -10,21 +11,17 @@ export default defineConfig({
   reporter: [["list"]],
   use: {
     baseURL: `http://localhost:${PORT}`,
-    // Lets environments with a preinstalled Chromium skip `npx playwright install`.
-    launchOptions: process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
     timezoneId: "America/New_York",
     trace: "retain-on-failure",
+    // Lets environments with a preinstalled Chromium skip `npx playwright install`.
+    launchOptions: process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {},
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    // Fresh database for every run. Build first with `npm run build`.
-    command: `rm -rf ${E2E_DATA_DIR} && next start -p ${PORT}`,
-    url: `http://localhost:${PORT}`,
+    // Builds with OpenNext and serves the real Worker in workerd, with a fresh local D1 database.
+    command: `node scripts/ensure-dev-vars.mjs && rm -rf ${E2E_DATA_DIR} && npx wrangler dev --port ${PORT} --ip 127.0.0.1 --persist-to ${E2E_DATA_DIR}`,
+    url: `http://localhost:${PORT}/login`,
+    timeout: 300_000,
     reuseExistingServer: false,
-    env: {
-      APP_ORIGIN: `http://localhost:${PORT}`,
-      DATA_DIR: E2E_DATA_DIR,
-      APP_SECRET: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
-    },
   },
 });

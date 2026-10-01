@@ -1,8 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Loaded with require() at runtime; no need to bundle ~80k words.
-  serverExternalPackages: ["wordlist-english"],
   poweredByHeader: false,
   async headers() {
     return [
@@ -20,3 +18,8 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+// Gives `next dev` the same Cloudflare bindings (a local D1 database, .dev.vars secrets) as production.
+if (process.env.NODE_ENV === "development") {
+  import("@opennextjs/cloudflare").then((m) => m.initOpenNextCloudflareForDev());
+}

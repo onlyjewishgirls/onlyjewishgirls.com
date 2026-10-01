@@ -7,7 +7,7 @@ import { rateLimit } from "@/server/rate-limit";
 
 /** Live checklist for the sign-up form. The dictionary lives on the server, so the browser asks here. */
 export const POST = api(async (req) => {
-  const limit = rateLimit(`password-check:${clientIp(req)}`, 120, 60_000);
+  const limit = await rateLimit(`password-check:${clientIp(req)}`, 120, 60_000);
   if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
 
   const body = await readJson(req);

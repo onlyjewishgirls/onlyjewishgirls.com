@@ -1,6 +1,5 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
-import { config } from "./config";
 
 export function jsonError(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ error, ...extra }, { status });
@@ -14,17 +13,19 @@ export function tooManyRequests(retryAfterSeconds: number) {
   );
 }
 
-/** CSRF protection: state-changing requests must come from our own pages. */
+/** CSRF protection: state-changing requests must come from a page on the same site. */
 function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get("origin");
-  if (origin) return origin === config.origin;
+  if (origin) return origin === new URL(req.url).origin;
   return req.headers.get("sec-fetch-site") === "same-origin";
 }
 
-/** Used only for rate limiting. Next fills in X-Forwarded-For from the socket when no proxy set it. */
+/**
+ * Used only for rate limiting. Cloudflare sets CF-Connecting-IP to the real
+ * client address and overwrites any value a client sends.
+ */
 export function clientIp(req: NextRequest): string {
-  const hops = (req.headers.get("x-forwarded-for") ?? "").split(",").map((p) => p.trim()).filter(Boolean);
-  return hops[Math.max(0, hops.length - config.trustedProxyHops)] ?? "unknown";
+  return req.headers.get("cf-connecting-ip") ?? "unknown";
 }
 
 /** Reads a JSON object body (max 64 KB). Returns {} for anything else. */

@@ -1,6 +1,6 @@
 import "server-only";
 import type { ActivityOutcome, StreakState } from "@/lib/streak/engine";
-import { db } from "./db";
+import { all, batch, first, run, type Statement } from "./db";
 
 /** The streak change from the day's first check-in, so the page can keep showing it all day. */
 export interface StreakEvent {
@@ -56,7 +56,7 @@ interface UserRow {
   created_at: number;
 }
 
-function toUser(row: UserRow | undefined): User | null {
+function toUser(row: UserRow | null): User | null {
   if (!row) return null;
   return {
     id: row.id,
@@ -86,23 +86,23 @@ function toUser(row: UserRow | undefined): User | null {
   };
 }
 
-export function findUserById(id: number): User | null {
-  return toUser(db().prepare("SELECT * FROM users WHERE id = ?").get(id) as UserRow | undefined);
+export async function findUserById(id: number): Promise<User | null> {
+  return toUser(await first<UserRow>("SELECT * FROM users WHERE id = ?", id));
 }
 
 /** Sign in with either the username or the email address. */
-export function findUserByLogin(identifier: string): User | null {
+export async function findUserByLogin(identifier: string): Promise<User | null> {
   const value = identifier.trim().toLowerCase();
   const column = value.includes("@") ? "email" : "username_lower";
-  return toUser(db().prepare(`SELECT * FROM users WHERE ${column} = ?`).get(value) as UserRow | undefined);
+  return toUser(await first<UserRow>(`SELECT * FROM users WHERE ${column} = ?`, value));
 }
 
-export function usernameTaken(username: string): boolean {
-  return !!db().prepare("SELECT 1 FROM users WHERE username_lower = ?").get(username.toLowerCase());
+export async function usernameTaken(username: string): Promise<boolean> {
+  return !!(await first("SELECT 1 FROM users WHERE username_lower = ?", username.toLowerCase()));
 }
 
-export function emailTaken(email: string): boolean {
-  return !!db().prepare("SELECT 1 FROM users WHERE email = ?").get(email);
+export async function emailTaken(email: string): Promise<boolean> {
+  return !!(await first("SELECT 1 FROM users WHERE email = ?", email));
 }
 
 export interface NewUser {
@@ -117,65 +117,71 @@ export interface NewUser {
   webauthnUserId: string;
 }
 
-export function createUser(u: NewUser, now: number): number {
-  const result = db()
-    .prepare(
-      `INSERT INTO users (first_name, middle_name, last_name, email, username, username_lower, phone_e164,
-                          password_hash, time_zone, webauthn_user_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      u.firstName,
-      u.middleName,
-      u.lastName,
-      u.email,
-      u.username,
-      u.username.toLowerCase(),
-      u.phone,
-      u.passwordHash,
-      u.timeZone,
-      u.webauthnUserId,
-      now,
-    );
-  return Number(result.lastInsertRowid);
+export async function createUser(u: NewUser, now: number): Promise<number> {
+  const { lastRowId } = await run(
+    `INSERT INTO users (first_name, middle_name, last_name, email, username, username_lower, phone_e164,
+                        password_hash, time_zone, webauthn_user_id, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    u.firstName,
+    u.middleName,
+    u.lastName,
+    u.email,
+    u.username,
+    u.username.toLowerCase(),
+    u.phone,
+    u.passwordHash,
+    u.timeZone,
+    u.webauthnUserId,
+    now,
+  );
+  return lastRowId;
 }
 
-export function updateTimeZone(userId: number, timeZone: string) {
-  db().prepare("UPDATE users SET time_zone = ? WHERE id = ?").run(timeZone, userId);
+export async function updateTimeZone(userId: number, timeZone: string) {
+  await run("UPDATE users SET time_zone = ? WHERE id = ?", timeZone, userId);
 }
 
-export function saveStreak(userId: number, s: StreakState, event: StreakEvent | null) {
-  db()
-    .prepare(
-      `UPDATE users SET streak_count = ?, streak_longest = ?, streak_last_activity_at = ?,
-                        streak_last_counted_date = ?, streak_started_at = ?, streak_last_event = ?
-       WHERE id = ?`,
-    )
-    .run(s.count, s.longest, s.lastActivityAt, s.lastCountedDate, s.startedAt, event && JSON.stringify(event), userId);
+export async function saveStreak(userId: number, s: StreakState, event: StreakEvent | null) {
+  await run(
+    `UPDATE users SET streak_count = ?, streak_longest = ?, streak_last_activity_at = ?,
+                      streak_last_counted_date = ?, streak_started_at = ?, streak_last_event = ?
+     WHERE id = ?`,
+    s.count,
+    s.longest,
+    s.lastActivityAt,
+    s.lastCountedDate,
+    s.startedAt,
+    event && JSON.stringify(event),
+    userId,
+  );
 }
 
 // ---- Authenticator app (TOTP) ----
 
-export function setPendingTotpSecret(userId: number, secretEnc: string) {
-  db().prepare("UPDATE users SET totp_pending_secret_enc = ? WHERE id = ?").run(secretEnc, userId);
+export async function setPendingTotpSecret(userId: number, secretEnc: string) {
+  await run("UPDATE users SET totp_pending_secret_enc = ? WHERE id = ?", secretEnc, userId);
 }
 
-export function enableTotp(userId: number, step: number, now: number) {
-  db()
-    .prepare(
-      `UPDATE users SET totp_secret_enc = totp_pending_secret_enc, totp_pending_secret_enc = NULL,
-                        totp_last_step = ?, totp_enabled_at = ?
-       WHERE id = ? AND totp_pending_secret_enc IS NOT NULL`,
-    )
-    .run(step, now, userId);
+export async function enableTotp(userId: number, step: number, now: number) {
+  await run(
+    `UPDATE users SET totp_secret_enc = totp_pending_secret_enc, totp_pending_secret_enc = NULL,
+                      totp_last_step = ?, totp_enabled_at = ?
+     WHERE id = ? AND totp_pending_secret_enc IS NOT NULL`,
+    step,
+    now,
+    userId,
+  );
 }
 
 /** Atomically records a used TOTP step; false if it (or a later one) was already used. */
-export function claimTotpStep(userId: number, step: number): boolean {
-  const result = db()
-    .prepare("UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)")
-    .run(step, userId, step);
-  return result.changes === 1;
+export async function claimTotpStep(userId: number, step: number): Promise<boolean> {
+  const { changes } = await run(
+    "UPDATE users SET totp_last_step = ? WHERE id = ? AND (totp_last_step IS NULL OR totp_last_step < ?)",
+    step,
+    userId,
+    step,
+  );
+  return changes === 1;
 }
 
 // ---- Passkeys ----
@@ -195,7 +201,7 @@ export interface Passkey {
 interface PasskeyRow {
   id: string;
   user_id: number;
-  public_key: Buffer;
+  public_key: string;
   counter: number;
   transports: string | null;
   device_type: string;
@@ -208,7 +214,7 @@ function toPasskey(row: PasskeyRow): Passkey {
   return {
     id: row.id,
     userId: row.user_id,
-    publicKey: new Uint8Array(row.public_key),
+    publicKey: new Uint8Array(Buffer.from(row.public_key, "base64url")),
     counter: row.counter,
     transports: row.transports ? JSON.parse(row.transports) : [],
     deviceType: row.device_type,
@@ -218,57 +224,61 @@ function toPasskey(row: PasskeyRow): Passkey {
   };
 }
 
-export function listPasskeys(userId: number): Passkey[] {
-  return (db().prepare("SELECT * FROM passkeys WHERE user_id = ? ORDER BY created_at").all(userId) as PasskeyRow[]).map(
-    toPasskey,
-  );
+export async function listPasskeys(userId: number): Promise<Passkey[]> {
+  return (await all<PasskeyRow>("SELECT * FROM passkeys WHERE user_id = ? ORDER BY created_at", userId)).map(toPasskey);
 }
 
-export function findPasskey(userId: number, id: string): Passkey | null {
-  const row = db().prepare("SELECT * FROM passkeys WHERE user_id = ? AND id = ?").get(userId, id) as
-    | PasskeyRow
-    | undefined;
+export async function findPasskey(userId: number, id: string): Promise<Passkey | null> {
+  const row = await first<PasskeyRow>("SELECT * FROM passkeys WHERE user_id = ? AND id = ?", userId, id);
   return row ? toPasskey(row) : null;
 }
 
-export function addPasskey(p: Omit<Passkey, "lastUsedAt">) {
-  db()
-    .prepare(
-      `INSERT INTO passkeys (id, user_id, public_key, counter, transports, device_type, backed_up, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(p.id, p.userId, Buffer.from(p.publicKey), p.counter, JSON.stringify(p.transports), p.deviceType, p.backedUp ? 1 : 0, p.createdAt);
+export async function addPasskey(p: Omit<Passkey, "lastUsedAt">) {
+  await run(
+    `INSERT INTO passkeys (id, user_id, public_key, counter, transports, device_type, backed_up, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    p.id,
+    p.userId,
+    Buffer.from(p.publicKey).toString("base64url"),
+    p.counter,
+    JSON.stringify(p.transports),
+    p.deviceType,
+    p.backedUp ? 1 : 0,
+    p.createdAt,
+  );
 }
 
-export function markPasskeyUsed(id: string, counter: number, now: number) {
-  db().prepare("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?").run(counter, now, id);
+export async function markPasskeyUsed(id: string, counter: number, now: number) {
+  await run("UPDATE passkeys SET counter = ?, last_used_at = ? WHERE id = ?", counter, now, id);
 }
 
 // ---- Recovery codes ----
 
-export function replaceRecoveryCodes(userId: number, hashes: string[], now: number) {
-  const conn = db();
-  conn.transaction(() => {
-    conn.prepare("DELETE FROM recovery_codes WHERE user_id = ?").run(userId);
-    const insert = conn.prepare("INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)");
-    for (const hash of hashes) insert.run(userId, hash);
-    conn.prepare("UPDATE users SET recovery_codes_created_at = ? WHERE id = ?").run(now, userId);
-  })();
+export async function replaceRecoveryCodes(userId: number, hashes: string[], now: number) {
+  const statements: Statement[] = [
+    ["DELETE FROM recovery_codes WHERE user_id = ?", userId],
+    ...hashes.map((hash): Statement => ["INSERT INTO recovery_codes (user_id, code_hash) VALUES (?, ?)", userId, hash]),
+    ["UPDATE users SET recovery_codes_created_at = ? WHERE id = ?", now, userId],
+  ];
+  await batch(statements);
 }
 
 /** Marks a recovery code as used. Returns how many unused codes remain, or null if the code was invalid. */
-export function consumeRecoveryCode(userId: number, hash: string, now: number): number | null {
-  const conn = db();
-  const result = conn
-    .prepare("UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL")
-    .run(now, userId, hash);
-  if (result.changes !== 1) return null;
-  const row = conn.prepare("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL").get(userId) as {
-    n: number;
-  };
-  return row.n;
+export async function consumeRecoveryCode(userId: number, hash: string, now: number): Promise<number | null> {
+  const { changes } = await run(
+    "UPDATE recovery_codes SET used_at = ? WHERE user_id = ? AND code_hash = ? AND used_at IS NULL",
+    now,
+    userId,
+    hash,
+  );
+  if (changes !== 1) return null;
+  const row = await first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL",
+    userId,
+  );
+  return row?.n ?? 0;
 }
 
-export function hasRecoveryCodes(userId: number): boolean {
-  return !!db().prepare("SELECT 1 FROM recovery_codes WHERE user_id = ? AND used_at IS NULL").get(userId);
+export async function hasRecoveryCodes(userId: number): Promise<boolean> {
+  return !!(await first("SELECT 1 FROM recovery_codes WHERE user_id = ? AND used_at IS NULL", userId));
 }

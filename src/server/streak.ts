@@ -14,7 +14,7 @@ export interface StreakCheckIn {
 }
 
 /** Records that a fully signed-in user showed up, and returns their streak. */
-export function checkIn(user: User, now = Date.now()): StreakCheckIn {
+export async function checkIn(user: User, now = Date.now()): Promise<StreakCheckIn> {
   const israel = observesIsraelSchedule(user.timeZone);
   const holyDays = holyDayLookup(israel);
   const result = recordActivity(user.streak, now, user.timeZone, holyDays);
@@ -23,10 +23,10 @@ export function checkIn(user: User, now = Date.now()): StreakCheckIn {
   let today = user.streakLastEvent?.date === date ? user.streakLastEvent : null;
   if (result.outcome !== "same-day") {
     today = { date, outcome: result.outcome, added: result.added, previousCount: result.previousCount };
-    saveStreak(user.id, result.state, today);
+    await saveStreak(user.id, result.state, today);
   } else if (now - (user.streak.lastActivityAt ?? 0) > 60_000) {
     // Same day: only the deadline moves. Skip the write for reloads seconds apart.
-    saveStreak(user.id, result.state, user.streakLastEvent);
+    await saveStreak(user.id, result.state, user.streakLastEvent);
   }
 
   return { status: getStreakStatus(result.state, now, user.timeZone, holyDays), today, israel, now };

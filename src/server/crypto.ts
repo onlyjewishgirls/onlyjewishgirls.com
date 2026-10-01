@@ -1,6 +1,6 @@
 import "server-only";
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomInt } from "node:crypto";
-import { appSecret } from "./config";
+import { appSecret } from "./env";
 
 export function randomToken(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");

@@ -7,13 +7,13 @@ import { verifyRegistration } from "@/server/webauthn";
 export const POST = api(async (req) => {
   const guard = await requireEnrollment();
   if (!guard.ok) return guard.response;
-  const challenge = takeChallenge(guard.ctx.session);
+  const challenge = await takeChallenge(guard.ctx.session);
   if (!challenge) return jsonError(400, "That took too long. Please try again.");
 
   const body = await readJson(req);
   let verified = false;
   try {
-    verified = await verifyRegistration(guard.ctx.user, body as unknown as RegistrationResponseJSON, challenge);
+    verified = await verifyRegistration(req, guard.ctx.user, body as unknown as RegistrationResponseJSON, challenge);
   } catch (error) {
     console.warn("Passkey registration rejected:", (error as Error).message);
   }

@@ -2,8 +2,12 @@ import "server-only";
 import { randomBytes, scrypt, timingSafeEqual, type ScryptOptions } from "node:crypto";
 import { normalizePassword } from "@/lib/password/policy";
 
-/** OWASP's recommended scrypt parameters: N=2^17, r=8, p=1 (128 MiB). */
-const PARAMS = { N: 2 ** 17, r: 8, p: 1 };
+/**
+ * One of OWASP's equivalent scrypt settings: N=2^14 (16 MiB), r=8, p=5.
+ * The 128 MiB setting doesn't fit in a Cloudflare Worker (128 MB per isolate,
+ * shared by concurrent requests), so this trades memory for more passes.
+ */
+const PARAMS = { N: 2 ** 14, r: 8, p: 5 };
 const KEY_LENGTH = 32;
 
 function derive(password: string, salt: Buffer, params: typeof PARAMS): Promise<Buffer> {

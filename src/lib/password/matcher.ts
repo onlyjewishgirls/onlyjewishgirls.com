@@ -35,20 +35,40 @@ export interface WordSet {
   maxLength: number;
 }
 
+/** Smallest index whose word is >= value. */
+function lowerBound(sorted: string[], value: string): number {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (sorted[mid] < value) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * A sorted array with binary search, rather than a Set of every prefix:
+ * the dictionary has ~79k words and has to fit in a Worker's memory.
+ */
 export function createWordSet(words: Iterable<string>, minLength: number): WordSet {
-  const set = new Set<string>();
-  const prefixes = new Set<string>();
+  const unique = new Set<string>();
   let maxLength = 0;
   for (const raw of words) {
     const word = foldText(raw);
     if (word.length < minLength) continue;
-    set.add(word);
+    unique.add(word);
     maxLength = Math.max(maxLength, word.length);
-    for (let i = 1; i < word.length; i++) prefixes.add(word.slice(0, i));
   }
+  const sorted = [...unique].sort();
   return {
-    has: (w) => set.has(w),
-    hasPrefix: (p) => prefixes.has(p),
+    has: (w) => sorted[lowerBound(sorted, w)] === w,
+    hasPrefix: (p) => {
+      // Words starting with p sit right after p itself in sorted order.
+      let i = lowerBound(sorted, p);
+      if (sorted[i] === p) i++;
+      return i < sorted.length && sorted[i].startsWith(p);
+    },
     maxLength,
   };
 }

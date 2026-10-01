@@ -9,7 +9,7 @@ export const POST = api(async (req) => {
   if (!guard.ok) return guard.response;
 
   const code = normalizeRecoveryCode(str((await readJson(req)).code));
-  const remaining = code ? consumeRecoveryCode(guard.ctx.user.id, sha256(code), Date.now()) : null;
+  const remaining = code ? await consumeRecoveryCode(guard.ctx.user.id, sha256(code), Date.now()) : null;
   if (remaining === null) return secondFactorFailed(guard.ctx, "That recovery code isn't valid or was already used.");
   return completeSecondFactor(guard.ctx, { remainingRecoveryCodes: remaining });
 });

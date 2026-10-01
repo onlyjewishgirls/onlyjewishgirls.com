@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import QRCode from "qrcode";
-import { config } from "@/server/config";
 import { encrypt } from "@/server/crypto";
+import { APP_NAME } from "@/server/env";
 import { api, jsonError } from "@/server/http";
 import { requireEnrollment } from "@/server/mfa-routes";
 import { generateTotpSecret, totpUri } from "@/server/totp";
@@ -15,8 +15,8 @@ export const POST = api(async () => {
 
   const { user } = guard.ctx;
   const secret = generateTotpSecret();
-  setPendingTotpSecret(user.id, encrypt(secret));
-  const uri = totpUri(secret, user.username, config.appName);
+  await setPendingTotpSecret(user.id, encrypt(secret));
+  const uri = totpUri(secret, user.username, APP_NAME);
   // Rendered here so the secret never goes to a third-party QR service.
   const qrCode = await QRCode.toDataURL(uri, { margin: 1, width: 220 });
   return NextResponse.json({ uri, qrCode, secret: secret.match(/.{1,4}/g)!.join(" ") });

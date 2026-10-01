@@ -8,7 +8,7 @@ export type PageAuth = AuthContext & { mfa: MfaState; next: NextStep };
 export async function getPageAuth(): Promise<PageAuth | null> {
   const ctx = await getAuth();
   if (!ctx) return null;
-  const mfa = mfaState(ctx.user);
+  const mfa = await mfaState(ctx.user);
   return { ...ctx, mfa, next: nextStep(ctx.session.stage, mfa) };
 }
 

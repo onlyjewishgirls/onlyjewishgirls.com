@@ -1,4 +1,4 @@
-import Database from "better-sqlite3";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { base32Decode, hotp, totpStep } from "../../src/server/totp";
@@ -50,8 +50,11 @@ async function signIn(page: Page, identifier: string, password: string) {
   await page.getByRole("button", { name: "Continue" }).click();
 }
 
-function db() {
-  return new Database(path.join(E2E_DATA_DIR, "app.db"));
+/** Runs SQL against the local D1 database that `wrangler dev` is serving. */
+function sql(statement: string) {
+  execFileSync("npx", ["wrangler", "d1", "execute", "DB", "--local", "--persist-to", E2E_DATA_DIR, "--command", statement], {
+    stdio: "pipe",
+  });
 }
 
 test("register, set up passkey + authenticator app, sign in every way, keep a streak", async ({ page }) => {
@@ -127,8 +130,9 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
 
   await test.step("save recovery codes and land on the streak page", async () => {
     await page.getByRole("button", { name: "Show my recovery codes" }).click();
-    recoveryCodes = await page.getByTestId("recovery-codes").locator("li").allInnerTexts();
-    expect(recoveryCodes).toHaveLength(10);
+    const codeItems = page.getByTestId("recovery-codes").locator("li");
+    await expect(codeItems).toHaveCount(10);
+    recoveryCodes = await codeItems.allInnerTexts();
     const proceed = page.getByRole("button", { name: /Continue/ });
     await expect(proceed).toBeDisabled();
     await page.getByLabel("I saved these somewhere safe").check();
@@ -185,26 +189,22 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
   });
 
   await test.step("checking in on a new day within 30 hours extends the streak", async () => {
-    const conn = db();
     const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-    conn
-      .prepare(
-        "UPDATE users SET streak_count = 5, streak_longest = 5, streak_last_activity_at = ?, streak_last_counted_date = ? WHERE username = ?",
-      )
-      .run(Date.now() - 20 * 3_600_000, yesterday, user.username);
-    conn.close();
+    sql(
+      `UPDATE users SET streak_count = 5, streak_longest = 5, streak_last_activity_at = ${Date.now() - 20 * 3_600_000},
+       streak_last_counted_date = '${yesterday}' WHERE username = '${user.username}'`,
+    );
     await page.reload();
     await expect(page.getByTestId("streak-count")).toHaveText("6");
     await expect(page.getByTestId("streak-banner")).toContainText("Streak extended");
   });
 
   await test.step("missing the deadline starts over", async () => {
-    const conn = db();
     // 100 hours is past even a 3-day Yom Tov's leeway.
-    conn
-      .prepare("UPDATE users SET streak_last_activity_at = ?, streak_last_counted_date = ? WHERE username = ?")
-      .run(Date.now() - 100 * 3_600_000, "2000-01-01", user.username);
-    conn.close();
+    sql(
+      `UPDATE users SET streak_last_activity_at = ${Date.now() - 100 * 3_600_000},
+       streak_last_counted_date = '2000-01-01' WHERE username = '${user.username}'`,
+    );
     await page.reload();
     await expect(page.getByTestId("streak-count")).toHaveText("1");
     await expect(page.getByTestId("streak-banner")).toContainText("Your 6-day streak ended");

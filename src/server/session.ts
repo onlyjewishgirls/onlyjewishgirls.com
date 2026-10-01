@@ -1,8 +1,8 @@
 import "server-only";
 import { cookies } from "next/headers";
-import { config } from "./config";
 import { randomToken, sha256 } from "./crypto";
-import { db } from "./db";
+import { first, run } from "./db";
+import { isLocalHost, requestHost } from "./env";
 import { findUserById, type User } from "./users";
 
 /**
@@ -19,8 +19,15 @@ const FULL_IDLE_TIMEOUT_MS = 3 * DAY;
 const CHALLENGE_LIFETIME_MS = 5 * MINUTE;
 export const MAX_MFA_FAILURES = 5;
 
-/** __Host- cookies can't be set by subdomains or over plain HTTP. */
-export const SESSION_COOKIE = config.secureCookies ? "__Host-ojg_session" : "ojg_session";
+/**
+ * The deployed site uses a __Host- cookie: HTTPS only, and no subdomain can set
+ * or overwrite it. localhost is plain HTTP, so local development uses a plain name.
+ */
+async function sessionCookie() {
+  return isLocalHost(await requestHost())
+    ? { name: "ojg_session", secure: false }
+    : { name: "__Host-ojg_session", secure: true };
+}
 
 export interface Session {
   idHash: string;
@@ -66,18 +73,23 @@ function toSession(row: SessionRow): Session {
  */
 export async function startSession(userId: number, stage: SessionStage, now = Date.now()): Promise<void> {
   await endSession();
-  db().prepare("DELETE FROM sessions WHERE expires_at <= ?").run(now);
+  await run("DELETE FROM sessions WHERE expires_at <= ?", now);
   const token = randomToken();
   const expiresAt = now + (stage === "full" ? FULL_LIFETIME_MS : PENDING_LIFETIME_MS);
-  db()
-    .prepare(
-      `INSERT INTO sessions (id_hash, user_id, stage, created_at, last_seen_at, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    )
-    .run(sha256(token), userId, stage, now, now, expiresAt);
-  (await cookies()).set(SESSION_COOKIE, token, {
+  await run(
+    `INSERT INTO sessions (id_hash, user_id, stage, created_at, last_seen_at, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    sha256(token),
+    userId,
+    stage,
+    now,
+    now,
+    expiresAt,
+  );
+  const cookie = await sessionCookie();
+  (await cookies()).set(cookie.name, token, {
     httpOnly: true,
-    secure: config.secureCookies,
+    secure: cookie.secure,
     sameSite: "lax",
     path: "/",
     expires: new Date(expiresAt),
@@ -87,10 +99,11 @@ export async function startSession(userId: number, stage: SessionStage, now = Da
 /** Route handlers only. */
 export async function endSession(): Promise<void> {
   const store = await cookies();
-  const token = store.get(SESSION_COOKIE)?.value;
+  const { name } = await sessionCookie();
+  const token = store.get(name)?.value;
   if (token) {
-    db().prepare("DELETE FROM sessions WHERE id_hash = ?").run(sha256(token));
-    store.delete(SESSION_COOKIE);
+    await run("DELETE FROM sessions WHERE id_hash = ?", sha256(token));
+    store.delete(name);
   }
 }
 
@@ -100,45 +113,49 @@ export interface AuthContext {
 }
 
 export async function getAuth(now = Date.now()): Promise<AuthContext | null> {
-  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  const token = (await cookies()).get((await sessionCookie()).name)?.value;
   if (!token) return null;
-  const conn = db();
-  const row = conn.prepare("SELECT * FROM sessions WHERE id_hash = ?").get(sha256(token)) as SessionRow | undefined;
+  const row = await first<SessionRow>("SELECT * FROM sessions WHERE id_hash = ?", sha256(token));
   if (!row) return null;
   const session = toSession(row);
   const idle = session.stage === "full" && now - session.lastSeenAt > FULL_IDLE_TIMEOUT_MS;
   if (now >= session.expiresAt || idle) {
-    conn.prepare("DELETE FROM sessions WHERE id_hash = ?").run(session.idHash);
+    await run("DELETE FROM sessions WHERE id_hash = ?", session.idHash);
     return null;
   }
-  const user = findUserById(session.userId);
+  const user = await findUserById(session.userId);
   if (!user) return null;
   if (now - session.lastSeenAt > MINUTE) {
-    conn.prepare("UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?").run(now, session.idHash);
+    await run("UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?", now, session.idHash);
   }
   return { session, user };
 }
 
 /** Stores a single-use WebAuthn challenge on the session. */
-export function setChallenge(session: Session, challenge: string, now = Date.now()) {
-  db()
-    .prepare("UPDATE sessions SET challenge = ?, challenge_expires_at = ? WHERE id_hash = ?")
-    .run(challenge, now + CHALLENGE_LIFETIME_MS, session.idHash);
+export async function setChallenge(session: Session, challenge: string, now = Date.now()) {
+  await run(
+    "UPDATE sessions SET challenge = ?, challenge_expires_at = ? WHERE id_hash = ?",
+    challenge,
+    now + CHALLENGE_LIFETIME_MS,
+    session.idHash,
+  );
 }
 
 /** Returns the pending challenge (if still valid) and clears it so it can't be reused. */
-export function takeChallenge(session: Session, now = Date.now()): string | null {
-  db().prepare("UPDATE sessions SET challenge = NULL, challenge_expires_at = NULL WHERE id_hash = ?").run(session.idHash);
+export async function takeChallenge(session: Session, now = Date.now()): Promise<string | null> {
+  await run("UPDATE sessions SET challenge = NULL, challenge_expires_at = NULL WHERE id_hash = ?", session.idHash);
   if (!session.challenge || !session.challengeExpiresAt || now > session.challengeExpiresAt) return null;
   return session.challenge;
 }
 
 /** Counts a failed second-factor attempt. Returns true when the session has been locked out (deleted). */
-export function recordMfaFailure(session: Session): boolean {
-  const conn = db();
-  conn.prepare("UPDATE sessions SET failed_mfa_attempts = failed_mfa_attempts + 1 WHERE id_hash = ?").run(session.idHash);
-  if (session.failedMfaAttempts + 1 >= MAX_MFA_FAILURES) {
-    conn.prepare("DELETE FROM sessions WHERE id_hash = ?").run(session.idHash);
+export async function recordMfaFailure(session: Session): Promise<boolean> {
+  const row = await first<{ failed_mfa_attempts: number }>(
+    "UPDATE sessions SET failed_mfa_attempts = failed_mfa_attempts + 1 WHERE id_hash = ? RETURNING failed_mfa_attempts",
+    session.idHash,
+  );
+  if ((row?.failed_mfa_attempts ?? MAX_MFA_FAILURES) >= MAX_MFA_FAILURES) {
+    await run("DELETE FROM sessions WHERE id_hash = ?", session.idHash);
     return true;
   }
   return false;

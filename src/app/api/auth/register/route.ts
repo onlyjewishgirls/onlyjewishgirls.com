@@ -18,7 +18,7 @@ import { startSession } from "@/server/session";
 import { createUser, emailTaken, usernameTaken } from "@/server/users";
 
 export const POST = api(async (req) => {
-  const limit = rateLimit(`register:${clientIp(req)}`, 10, 60 * 60_000);
+  const limit = await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60_000);
   if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
 
   const body = await readJson(req);
@@ -42,8 +42,8 @@ export const POST = api(async (req) => {
   const phone = parseMax(input.phone.trim(), input.phoneCountry as Parameters<typeof parseMax>[1]);
   if (!errors.phone && phone?.getType() === "FIXED_LINE") errors.phone = "That looks like a landline. Enter a mobile number.";
 
-  if (!errors.username && usernameTaken(input.username)) errors.username = "That username is taken";
-  if (!errors.email && emailTaken(email)) errors.email = "An account with this email already exists";
+  if (!errors.username && (await usernameTaken(input.username))) errors.username = "That username is taken";
+  if (!errors.email && (await emailTaken(email))) errors.email = "An account with this email already exists";
 
   const rules = checkPassword(
     input.password,
@@ -59,7 +59,7 @@ export const POST = api(async (req) => {
   const now = Date.now();
   let userId: number;
   try {
-    userId = createUser(
+    userId = await createUser(
       {
         firstName: normalizeName(input.firstName),
         middleName: input.noMiddleName ? null : normalizeName(input.middleName),
@@ -75,7 +75,7 @@ export const POST = api(async (req) => {
     );
   } catch (error) {
     // Two sign-ups racing for the same username/email.
-    if ((error as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+    if (/UNIQUE constraint failed/.test(String((error as Error)?.message))) {
       return jsonError(409, "That username or email was just taken. Try another.");
     }
     throw error;

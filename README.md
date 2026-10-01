@@ -2,7 +2,7 @@
 
 Sign-up, sign-in with mandatory two-step verification (passkey + authenticator app), and a Yom Tov–aware 🔥 daily streak. The rest of the site is a "coming soon" placeholder for now.
 
-Built with Next.js 16 (App Router), TypeScript, Tailwind CSS 4, SQLite (`better-sqlite3`), [SimpleWebAuthn](https://simplewebauthn.dev) for passkeys and [`@hebcal/core`](https://github.com/hebcal/hebcal-es6) for the Jewish calendar.
+Built with Next.js 16 (App Router), TypeScript and Tailwind CSS 4. It runs on a Cloudflare Worker via [OpenNext](https://opennext.js.org/cloudflare), with data in Cloudflare D1. Passkeys use [SimpleWebAuthn](https://simplewebauthn.dev) and the Jewish calendar comes from [`@hebcal/core`](https://github.com/hebcal/hebcal-es6).
 
 ## Running it
 
@@ -11,12 +11,13 @@ npm install
 npm run dev          # http://localhost:3000
 ```
 
-Open the site at **exactly** `http://localhost:3000`, not `127.0.0.1`. Passkeys and the cross-site-request check are tied to that origin. Settings are in [`.env.example`](.env.example). Development needs none of them; the SQLite database and an encryption key are created in `.data/` the first time you run it.
+Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one address don't work on the other. `npm run dev` creates `.dev.vars` (local secrets; see [`.dev.vars.example`](.dev.vars.example)). The local D1 database lives in `.wrangler/`. Tables are created automatically on first use, locally and in production ([`src/server/schema.ts`](src/server/schema.ts)).
 
 | Command | What it does |
 | --- | --- |
 | `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation |
-| `npm run test:e2e` | Builds, then drives Chromium through registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break. Uses a throwaway database in `.data/e2e`. If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break. If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 
 ## Registration
@@ -36,7 +37,7 @@ All in [`src/lib/password/`](src/lib/password). The sign-up form shows a live ch
 | No personal info | no 3+ character piece of the first, middle or last name, username, or any part of the email (a 2-letter name like "Li" is blocked whole), and no 4+ digit run from the phone number. Look-alikes count here too. |
 | No sequences | `abc`/`cba`/`123`/`987`, keyboard rows `qwe`/`asd`/`zxc`/`!@#`, keyboard columns `1qaz`/`wsx`, number-pad lines `147`/`159`, repeats `aaa`, repeated chunks `abab`/`1212`, skip-counting `2468`/`aceg` |
 
-Passwords are hashed with scrypt (N=2¹⁷, r=8, p=1, OWASP's recommendation).
+Passwords are hashed with scrypt at N=2¹⁴, r=8, p=5, one of OWASP's recommended settings. It uses 16 MiB because a Worker gets only 128 MB of memory, shared across requests.
 
 ## Two-step verification
 
@@ -55,7 +56,7 @@ Safeguards:
 - The session ID is replaced at each privilege step.
 - Each session gets 5 wrong second-factor tries, and each account gets 10 wrong tries per hour.
 - Rate limits on login, sign-up and the password checker.
-- Every POST checks `Origin` (CSRF protection), and cookies are `HttpOnly` + `SameSite=Lax` (`__Host-` + `Secure` on HTTPS).
+- Every POST checks `Origin` (CSRF protection), and cookies are `HttpOnly` + `SameSite=Lax` (`__Host-` + `Secure` everywhere except localhost).
 
 ## 🔥 Streak
 
@@ -70,11 +71,17 @@ The engine is [`src/lib/streak/engine.ts`](src/lib/streak/engine.ts), a set of p
 
 Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `YOM_TOV_EXTRA_DAY_HOURS`, `AT_RISK_HOURS`).
 
-## Deploying
+## Deploying (Cloudflare)
 
-- Set `APP_ORIGIN=https://onlyjewishgirls.com`, `WEBAUTHN_RP_ID=onlyjewishgirls.com` and `APP_SECRET` (`openssl rand -base64 32`). The site refuses to start in production without `APP_SECRET`. Changing it later makes existing authenticator-app setups unreadable.
-- SQLite needs a persistent disk (a VPS, Fly volume, Render disk, etc.). Serverless hosts with throwaway filesystems would need the data layer ([`src/server/users.ts`](src/server/users.ts), [`session.ts`](src/server/session.ts), [`rate-limit.ts`](src/server/rate-limit.ts)) moved to Postgres.
-- Set `TRUSTED_PROXY_HOPS` to the number of proxies in front of the app, so rate limits see real client IPs.
+Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker. Its deploy step runs `wrangler deploy`, which first runs the build command in [`wrangler.jsonc`](wrangler.jsonc) (`opennextjs-cloudflare build`). The D1 database `onlyjewishgirls` is bound as `DB`.
+
+One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewishgirlsdotcom**:
+
+1. **Settings → Variables and Secrets:** add a secret `APP_SECRET` with 32 random bytes (`openssl rand -base64 32`). Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
+2. **Plan:** password hashing needs about 0.2 s of CPU per sign-in or sign-up. That needs **Workers Paid**; the Free plan allows only 10 ms per request.
+3. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
+
+Preview deployments use the same D1 database as production unless you give previews their own binding.
 
 ## Layout
 
@@ -82,7 +89,7 @@ Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `YOM_TOV_
 src/lib/password/      password rules (shared by browser + server)
 src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
 src/lib/validation.ts  registration field rules (shared)
-src/server/            database, sessions, scrypt, TOTP, WebAuthn, rate limits
+src/server/            D1 access + schema, sessions, scrypt, TOTP, WebAuthn, rate limits
 src/app/api/           auth + MFA endpoints
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /home
 tests/unit, tests/e2e  Vitest and Playwright

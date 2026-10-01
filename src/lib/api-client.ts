@@ -11,7 +11,7 @@ export async function postJson<T = Record<string, unknown>>(url: string, body: u
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = (await res.json().catch(() => ({}))) as ApiResult<T>["data"];
     return { ok: res.ok, status: res.status, data };
   } catch {
     return { ok: false, status: 0, data: { error: "Can't reach the server. Check your connection." } as T & { error: string } };

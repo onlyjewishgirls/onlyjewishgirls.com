@@ -3,19 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/ensure-dev-vars.mjs",
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "preview": "node scripts/ensure-dev-vars.mjs && wrangler dev",
+    "deploy": "wrangler deploy",
+    "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:e2e": "next build && playwright test"
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@hebcal/core": "^6.11.0",
+    "@opennextjs/cloudflare": "^1.20.7",
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^14.0.3",
-    "better-sqlite3": "^13.0.3",
     "libphonenumber-js": "^1.13.14",
     "next": "16.3.8",
     "qrcode": "^1.5.4",
@@ -27,7 +30,6 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
-    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^22.20.4",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
@@ -36,7 +38,8 @@
     "eslint-config-next": "16.3.8",
     "tailwindcss": "^4",
     "typescript": "^5",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "wrangler": "^4.145.0"
   },
   "engines": {
     "node": ">=20.9"

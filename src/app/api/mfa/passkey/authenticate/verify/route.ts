@@ -7,13 +7,13 @@ import { verifyAuthentication } from "@/server/webauthn";
 export const POST = api(async (req) => {
   const guard = await requireSecondFactorStep();
   if (!guard.ok) return guard.response;
-  const challenge = takeChallenge(guard.ctx.session);
+  const challenge = await takeChallenge(guard.ctx.session);
   if (!challenge) return jsonError(400, "That took too long. Please try again.");
 
   const body = await readJson(req);
   let verified = false;
   try {
-    verified = await verifyAuthentication(guard.ctx.user, body as unknown as AuthenticationResponseJSON, challenge);
+    verified = await verifyAuthentication(req, guard.ctx.user, body as unknown as AuthenticationResponseJSON, challenge);
   } catch (error) {
     console.warn("Passkey sign-in rejected:", (error as Error).message);
   }
