@@ -1,0 +1,15 @@
+# Local secrets for `npm run dev` / `npm run preview`. `npm run dev` creates .dev.vars for you.
+# In production, set these under Workers & Pages → onlyjewishgirlsdotcom → Settings → Variables and Secrets.
+
+# 32 random bytes, base64. Encrypts authenticator-app secrets. Generate: openssl rand -base64 32
+APP_SECRET=
+
+# Optional. Lets one passkey work on both onlyjewishgirls.com and www.onlyjewishgirls.com.
+# WEBAUTHN_RP_ID=onlyjewishgirls.com
+
+# Optional. Sends password-reset emails through Resend. Without these, emails are printed to the terminal.
+# EMAIL_API_KEY=re_...
+# EMAIL_FROM=OnlyJewishGirls <no-reply@onlyjewishgirls.com>
+
+# Optional. Base URL for links in emails. Defaults to the address the request came in on.
+# PUBLIC_ORIGIN=https://onlyjewishgirls.com

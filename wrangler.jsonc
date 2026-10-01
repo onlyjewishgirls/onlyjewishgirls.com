@@ -1,0 +1,41 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Must match the Worker that Workers Builds deploys this repo to.
+  "name": "onlyjewishgirlsdotcom",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-09-30",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Builds the app before local `wrangler dev` / `wrangler deploy`. Workers Builds
+  // ignores this; its dashboard Build command runs `npx opennextjs-cloudflare build`.
+  "build": {
+    "command": "npx opennextjs-cloudflare build"
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "onlyjewishgirls",
+      "database_id": "5ac84961-1003-40ed-948e-e641431d187d"
+    }
+  ],
+  // Preview deployments (`wrangler preview`, run by Workers Builds for pull
+  // requests) get their own database, so testing never touches real accounts.
+  "previews": {
+    "d1_databases": [
+      {
+        "binding": "DB",
+        "database_name": "onlyjewishgirls-preview",
+        "database_id": "148344fe-d550-40be-abc5-da0f447cc762"
+      }
+    ]
+  },
+  // EMAIL_FROM and other plain variables are managed in the dashboard. Without this,
+  // every `wrangler deploy` deletes them (secrets are always kept).
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  }
+}
