@@ -1,5 +1,6 @@
 import "server-only";
 import { NextResponse, type NextRequest } from "next/server";
+import { ConfigError } from "./app-secret";
 
 export function jsonError(status: number, error: string, extra: Record<string, unknown> = {}) {
   return NextResponse.json({ error, ...extra }, { status });
@@ -54,6 +55,9 @@ export function api(handler: Handler): Handler {
       return await handler(req);
     } catch (error) {
       console.error(error);
+      if (error instanceof ConfigError) {
+        return jsonError(500, `This site isn't fully set up yet: ${error.message}`);
+      }
       return jsonError(500, "Something went wrong. Please try again.");
     }
   };
