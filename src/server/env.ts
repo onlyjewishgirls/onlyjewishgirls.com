@@ -1,6 +1,7 @@
 import "server-only";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { headers } from "next/headers";
+import { parseAppSecret } from "./app-secret";
 
 export const APP_NAME = "OnlyJewishGirls";
 
@@ -16,13 +17,8 @@ let secret: Buffer | undefined;
  * APP_SECRET secret on the Worker; `npm run dev` creates one in .dev.vars.
  */
 export function appSecret(): Buffer {
-  if (secret) return secret;
-  const raw = cfEnv().APP_SECRET;
-  if (!raw) throw new Error("APP_SECRET is not set. Add it as a secret on the Worker (see README).");
-  const decoded = /^[0-9a-f]{64}$/i.test(raw) ? Buffer.from(raw, "hex") : Buffer.from(raw, "base64");
-  if (decoded.length !== 32) throw new Error("APP_SECRET must be 32 bytes, base64 or hex encoded");
-  secret = decoded;
-  return decoded;
+  secret ??= parseAppSecret(cfEnv().APP_SECRET);
+  return secret;
 }
 
 /**
