@@ -15,8 +15,8 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation |
-| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password. If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords |
+| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
 | `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 
@@ -88,6 +88,37 @@ The unit tests sweep a full year in New York, Jerusalem, London, Melbourne, Los 
 
 Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `AFTER_HOLY_DAY_HOURS`, `AT_RISK_HOURS`) and the calendar (`STARTS_BEFORE_SUNSET_MINUTES`, `ENDS_AFTER_SUNSET_MINUTES`).
 
+## Admin panel
+
+`/admin`, linked from the header for admins. Anyone else gets a 404.
+
+**Roles.** `owner` (the site owner, set for briefchaimyuir@gmail.com by migration 3), `admin` and `member`. The owner can make members admins and back. Admins see everything and manage members, but can't act on other admins or the owner. Nobody can suspend, delete, demote, reset two-step sign-in or set a temporary password on their own account. The rules are in [`src/lib/admin/permissions.ts`](src/lib/admin/permissions.ts) and are enforced on the server.
+
+On a fresh database (local or the preview database), make yourself owner after registering:
+
+```bash
+npx wrangler d1 execute DB --local --command "UPDATE users SET role = 'owner' WHERE email = 'you@example.com'"
+```
+
+**What it shows**
+
+- **Overview:** setup warnings, key numbers, sign-ups and active people per day for 30 days, longest live streaks, recent activity.
+- **Accounts:** search (name, username, email, phone, ID), filters (suspended, admins, two-step not finished, joined this week, locked out), sorting, and a CSV export of every account.
+- **Account page:** profile, streak, passkeys, authenticator app, recovery codes, signed-in devices (browser, city, country, IP), lockout state, admin note, and their activity.
+- **Activity:** every sign-in, failure, lockout, two-step, password, streak and admin event, with device, country and IP. Kept for a year.
+
+**What it can do:** create accounts with a temporary password; set a temporary password; email a reset link; suspend and lift suspensions; sign out everywhere or one device; unlock sign-in; remove a passkey, turn off the authenticator app, delete recovery codes or reset two-step sign-in; edit the profile, streak, note and role; delete the account.
+
+Temporary passwords are shown to the admin once and never stored or logged. After signing in with one, the person sets up two-step sign-in if needed, then must choose their own password at `/change-password` (also linked from Home for anyone).
+
+**Undo:** the owner can undo a suspension, a lifted suspension, and role, profile, streak and note changes from the activity log, once each. An undo is refused if the account has changed since.
+
+**Safeguards:**
+- Every change, plus the export, needs a passkey or authenticator check within the last 15 minutes. The panel asks for one and retries.
+- Wrong codes count toward the normal hourly lockout.
+- Every change is logged with who made it, when, the device and the IP.
+- A suspended account's sessions end on its next request, and its reset links stop working.
+
 ## Deploying (Cloudflare)
 
 Workers Builds deploys this repo to the `onlyjewishgirlsdotcom` Worker, and the D1 database `onlyjewishgirls` is bound as `DB`. Pull-request previews (`wrangler preview`) use a separate database, `onlyjewishgirls-preview` (the `previews` block in `wrangler.jsonc`), so testing never touches real accounts.
@@ -105,8 +136,11 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 src/lib/password/      password rules (shared by browser + server)
 src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
 src/lib/validation.ts  registration field rules (shared)
-src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email
-src/app/api/           auth + MFA endpoints
-src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password, /home
+src/lib/admin/         admin roles/permissions, event labels, display helpers
+src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email,
+                       activity log (events.ts), admin queries and guards (admin.ts), undo (admin-undo.ts)
+src/app/api/           auth, MFA and admin endpoints
+src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password,
+                       /change-password, /home, /admin (overview, accounts, account, activity)
 tests/unit, tests/e2e  Vitest and Playwright
 ```

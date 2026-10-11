@@ -1,4 +1,5 @@
 import type { RegistrationResponseJSON } from "@simplewebauthn/server";
+import { logEvent } from "@/server/events";
 import { api, jsonError, readJson } from "@/server/http";
 import { afterEnrollment, requireEnrollment } from "@/server/mfa-routes";
 import { takeChallenge } from "@/server/session";
@@ -18,5 +19,6 @@ export const POST = api(async (req) => {
     console.warn("Passkey registration rejected:", (error as Error).message);
   }
   if (!verified) return jsonError(400, "We couldn't verify that passkey. Please try again.");
+  await logEvent("mfa.passkey_added", { user: guard.ctx.user });
   return afterEnrollment(guard.ctx);
 });

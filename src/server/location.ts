@@ -47,3 +47,13 @@ export async function syncPlace(user: User): Promise<Place> {
     longitude: location.longitude,
   };
 }
+
+/** The user's place as last stored, for looking at someone else's streak (admin panel). */
+export function storedPlace(user: User): Place {
+  return {
+    timeZone: user.timeZone,
+    israel: observesIsraelSchedule(user.timeZone, user.country),
+    latitude: user.latitude,
+    longitude: user.longitude,
+  };
+}

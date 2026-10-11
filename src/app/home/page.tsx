@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ENDS_AFTER_SUNSET_MINUTES, STARTS_BEFORE_SUNSET_MINUTES, holyPeriods } from "@/lib/streak/calendar";
 import { AFTER_HOLY_DAY_HOURS, AT_RISK_HOURS, STREAK_WINDOW_HOURS } from "@/lib/streak/engine";
 import { requirePage } from "@/server/guards";
@@ -72,6 +73,12 @@ export default async function HomePage() {
         <p className="text-lg font-semibold text-foreground">More is coming soon ✨</p>
         <p className="mt-1">Keep your streak alive. You&apos;ll be the first to see what&apos;s next.</p>
       </section>
+
+      <p className="text-center text-sm">
+        <Link href="/change-password" className="link">
+          Change password
+        </Link>
+      </p>
     </div>
   );
 }

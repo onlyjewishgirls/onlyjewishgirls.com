@@ -70,11 +70,11 @@ export async function sendPasswordResetEmail(req: NextRequest, user: User, now =
   );
 }
 
-export function sendPasswordChangedEmail(req: NextRequest, user: User) {
+export function sendPasswordChangedEmail(req: NextRequest, user: User, { keptThisDevice = false } = {}) {
   const url = `${siteOrigin(req)}/forgot-password`;
   const lines = [
     `Hi ${user.firstName},`,
-    `The password for your ${APP_NAME} account "${user.username}" was just changed, and you were signed out on every device.`,
+    `The password for your ${APP_NAME} account "${user.username}" was just changed, and you were signed out on every ${keptThisDevice ? "other " : ""}device.`,
     "If this wasn't you, reset your password right away and make sure your email account is secure.",
   ];
   inBackground(

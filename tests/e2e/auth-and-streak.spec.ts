@@ -1,9 +1,6 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import path from "node:path";
-import { expect, test, type Page } from "@playwright/test";
-import { base32Decode, hotp, totpStep } from "../../src/server/totp";
-import { E2E_DATA_DIR } from "../../playwright.config";
+import { expect, test } from "@playwright/test";
+import { addVirtualAuthenticator, screenshot, signIn, signOut, sql, totp } from "./helpers";
 
 const user = {
   firstName: "Chaya",
@@ -14,49 +11,6 @@ const user = {
   phone: "212-555-0147",
   password: "Xq7#Rv!Kz9Wm$Pd2",
 };
-
-const shots = process.env.SCREENSHOT_DIR;
-async function screenshot(page: Page, name: string) {
-  if (shots) await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true });
-}
-
-function totp(secret: string, stepOffset = 0) {
-  return hotp(base32Decode(secret), totpStep(Date.now()) + stepOffset);
-}
-
-async function addVirtualAuthenticator(page: Page) {
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send("WebAuthn.enable");
-  await cdp.send("WebAuthn.addVirtualAuthenticator", {
-    options: {
-      protocol: "ctap2",
-      transport: "internal",
-      hasResidentKey: true,
-      hasUserVerification: true,
-      isUserVerified: true,
-      automaticPresenceSimulation: true,
-    },
-  });
-}
-
-async function signOut(page: Page) {
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page).toHaveURL("/");
-}
-
-async function signIn(page: Page, identifier: string, password: string) {
-  await page.goto("/login");
-  await page.getByLabel("Username or email").fill(identifier);
-  await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Continue" }).click();
-}
-
-/** Runs SQL against the local D1 database that `wrangler dev` is serving. */
-function sql(statement: string) {
-  execFileSync("npx", ["wrangler", "d1", "execute", "DB", "--local", "--persist-to", E2E_DATA_DIR, "--command", statement], {
-    stdio: "pipe",
-  });
-}
 
 test("register, set up passkey + authenticator app, sign in every way, keep a streak", async ({ page }) => {
   test.setTimeout(120_000);

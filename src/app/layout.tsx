@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { SignOutButton } from "@/components/SignOutButton";
+import { isAdminRole } from "@/lib/admin/permissions";
 import { getAuth } from "@/server/session";
 import "./globals.css";
 
@@ -23,6 +24,7 @@ export const metadata: Metadata = {
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   const auth = await getAuth();
   const signedIn = auth?.session.stage === "full";
+  const admin = signedIn && isAdminRole(auth.user.role);
 
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
@@ -34,7 +36,14 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             </Link>
             <div className="flex items-center gap-2 text-sm">
               {auth ? (
-                <SignOutButton />
+                <>
+                  {admin && (
+                    <Link href="/admin" className="btn-secondary">
+                      Admin
+                    </Link>
+                  )}
+                  <SignOutButton />
+                </>
               ) : (
                 <>
                   <Link href="/login" className="btn-secondary">

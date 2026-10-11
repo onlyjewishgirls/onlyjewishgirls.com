@@ -1,8 +1,9 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { randomToken, sha256 } from "./crypto";
-import { first, run } from "./db";
+import { all, first, run } from "./db";
 import { isLocalHost, requestHost } from "./env";
+import { requestInfo } from "./events";
 import { findUserById, type User } from "./users";
 
 /**
@@ -39,6 +40,12 @@ export interface Session {
   createdAt: number;
   lastSeenAt: number;
   expiresAt: number;
+  /** Last time a second factor was checked on this session (sign-in or admin re-verification). */
+  verifiedAt: number | null;
+  ip: string | null;
+  userAgent: string | null;
+  country: string | null;
+  city: string | null;
 }
 
 interface SessionRow {
@@ -51,6 +58,11 @@ interface SessionRow {
   created_at: number;
   last_seen_at: number;
   expires_at: number;
+  verified_at: number | null;
+  ip: string | null;
+  user_agent: string | null;
+  country: string | null;
+  city: string | null;
 }
 
 function toSession(row: SessionRow): Session {
@@ -64,6 +76,11 @@ function toSession(row: SessionRow): Session {
     createdAt: row.created_at,
     lastSeenAt: row.last_seen_at,
     expiresAt: row.expires_at,
+    verifiedAt: row.verified_at,
+    ip: row.ip,
+    userAgent: row.user_agent,
+    country: row.country,
+    city: row.city,
   };
 }
 
@@ -76,15 +93,23 @@ export async function startSession(userId: number, stage: SessionStage, now = Da
   await run("DELETE FROM sessions WHERE expires_at <= ?", now);
   const token = randomToken();
   const expiresAt = now + (stage === "full" ? FULL_LIFETIME_MS : PENDING_LIFETIME_MS);
+  const info = await requestInfo();
   await run(
-    `INSERT INTO sessions (id_hash, user_id, stage, created_at, last_seen_at, expires_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO sessions (id_hash, user_id, stage, created_at, last_seen_at, expires_at, verified_at,
+                           ip, user_agent, country, city)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     sha256(token),
     userId,
     stage,
     now,
     now,
     expiresAt,
+    // A session only becomes "full" right after a second factor (or the very first one being set up).
+    stage === "full" ? now : null,
+    info.ip,
+    info.userAgent,
+    info.country,
+    info.city,
   );
   const cookie = await sessionCookie();
   (await cookies()).set(cookie.name, token, {
@@ -125,6 +150,10 @@ export async function getAuth(now = Date.now()): Promise<AuthContext | null> {
   }
   const user = await findUserById(session.userId);
   if (!user) return null;
+  if (user.suspendedAt !== null) {
+    await run("DELETE FROM sessions WHERE user_id = ?", user.id);
+    return null;
+  }
   if (now - session.lastSeenAt > MINUTE) {
     await run("UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?", now, session.idHash);
   }
@@ -159,4 +188,26 @@ export async function recordMfaFailure(session: Session): Promise<boolean> {
     return true;
   }
   return false;
+}
+
+/** Admin changes and adding sign-in methods need a second factor checked within this long. */
+export const VERIFY_WINDOW_MS = 15 * MINUTE;
+
+export function recentlyVerified(session: Session, now = Date.now()): boolean {
+  return session.verifiedAt !== null && now - session.verifiedAt < VERIFY_WINDOW_MS;
+}
+
+/** Records a fresh second-factor check, for actions that need one (admin changes). */
+export async function markVerified(session: Session, now = Date.now()) {
+  await run("UPDATE sessions SET verified_at = ? WHERE id_hash = ?", now, session.idHash);
+}
+
+/** Live sessions for an account, newest activity first. */
+export async function listSessions(userId: number, now = Date.now()): Promise<Session[]> {
+  const rows = await all<SessionRow>(
+    "SELECT * FROM sessions WHERE user_id = ? AND expires_at > ? ORDER BY last_seen_at DESC",
+    userId,
+    now,
+  );
+  return rows.map(toSession);
 }

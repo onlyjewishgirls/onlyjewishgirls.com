@@ -9,7 +9,7 @@ export async function getPageAuth(): Promise<PageAuth | null> {
   const ctx = await getAuth();
   if (!ctx) return null;
   const mfa = await mfaState(ctx.user);
-  return { ...ctx, mfa, next: nextStep(ctx.session.stage, mfa) };
+  return { ...ctx, mfa, next: nextStep(ctx.session.stage, mfa, ctx.user.mustChangePassword) };
 }
 
 /** Sends the visitor wherever they belong unless it's `here`. */

@@ -11,6 +11,7 @@ import {
   type RegistrationInput,
 } from "@/lib/validation";
 import { getDictionary } from "@/server/dictionary";
+import { logEvent } from "@/server/events";
 import { api, clientIp, jsonError, readJson, str, tooManyRequests } from "@/server/http";
 import { hashPassword } from "@/server/passwords";
 import { rateLimit } from "@/server/rate-limit";
@@ -82,5 +83,6 @@ export const POST = api(async (req) => {
   }
 
   await startSession(userId, "password", now);
+  await logEvent("account.created", { user: { id: userId, username: input.username }, now });
   return NextResponse.json({ next: "/setup-mfa" });
 });

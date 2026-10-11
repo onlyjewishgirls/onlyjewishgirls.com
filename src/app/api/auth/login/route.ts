@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { isValidTimeZone } from "@/lib/streak/dates";
+import { looksLikeLoginName } from "@/lib/validation";
+import { sha256 } from "@/server/crypto";
+import { logEvent } from "@/server/events";
 import { api, clientIp, jsonError, readJson, str, tooManyRequests } from "@/server/http";
 import { mfaState, nextStep } from "@/server/mfa";
 import { burnPasswordCheck, verifyPassword } from "@/server/passwords";
@@ -20,21 +23,38 @@ export const POST = api(async (req) => {
   if (!ipLimit.ok) return tooManyRequests(ipLimit.retryAfterSeconds);
 
   const user = await findUserByLogin(identifier);
+  // What was typed is only recorded if it could be a username or email, never if it might be a password.
+  const typed = user || !looksLikeLoginName(str(body.identifier)) ? undefined : { identifier: identifier.slice(0, 64) };
   // Keyed by account, so switching between username and email doesn't buy extra guesses.
-  const accountKey = `login:account:${user ? user.id : identifier}`;
+  // Unknown names are hashed so what was typed isn't kept in the database.
+  const accountKey = `login:account:${user ? user.id : sha256(identifier)}`;
   const accountLimit = await rateLimit(accountKey, 10, WINDOW_MS);
-  if (!accountLimit.ok) return tooManyRequests(accountLimit.retryAfterSeconds);
+  if (!accountLimit.ok) {
+    // Logged once per lockout, not once per refused attempt.
+    if (accountLimit.firstRefusal) await logEvent("signin.rate_limited", { user, detail: typed });
+    return tooManyRequests(accountLimit.retryAfterSeconds);
+  }
 
   if (!user) {
     await burnPasswordCheck(password);
+    await logEvent("signin.unknown", { detail: typed });
     return jsonError(401, BAD_LOGIN);
   }
-  if (!(await verifyPassword(password, user.passwordHash))) return jsonError(401, BAD_LOGIN);
+  if (!(await verifyPassword(password, user.passwordHash))) {
+    await logEvent("signin.failed", { user });
+    return jsonError(401, BAD_LOGIN);
+  }
+  // Only said after the right password, so it doesn't reveal anything to someone guessing.
+  if (user.suspendedAt !== null) {
+    await logEvent("signin.suspended", { user });
+    return jsonError(403, "This account has been suspended. If you think this is a mistake, contact support.");
+  }
 
   await resetRateLimit(accountKey);
   const timeZone = str(body.timeZone);
   if (isValidTimeZone(timeZone) && timeZone !== user.timeZone) await updateTimeZone(user.id, timeZone);
 
   await startSession(user.id, "password");
+  await logEvent("signin.password", { user });
   return NextResponse.json({ next: nextStep("password", await mfaState(user)) });
 });
