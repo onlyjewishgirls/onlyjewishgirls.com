@@ -12,6 +12,10 @@
   --danger: #b4232f;
   --success: #17803d;
   --fire: #f97316;
+  --warning: #9a5b00;
+  /* Chart marks: the brand blue stepped into the data-viz lightness band (validated). */
+  --viz-series: #2747bb;
+  --viz-grid: #ece9e1;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -27,6 +31,9 @@
     --danger: #ff7a85;
     --success: #4ade80;
     --fire: #fb923c;
+    --warning: #f5b544;
+    --viz-series: #6582f5;
+    --viz-grid: #2a2935;
   }
 }
 
@@ -42,6 +49,9 @@
   --color-danger: var(--danger);
   --color-success: var(--success);
   --color-fire: var(--fire);
+  --color-warning: var(--warning);
+  --color-viz-series: var(--viz-series);
+  --color-viz-grid: var(--viz-grid);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -77,6 +87,21 @@ body {
 }
 @utility field-error {
   @apply mt-1.5 text-sm text-danger;
+}
+@utility btn-danger {
+  @apply btn border border-danger/40 bg-surface text-danger hover:bg-danger/10;
+}
+@utility btn-sm {
+  @apply px-3 py-1.5 text-xs;
+}
+@utility badge {
+  @apply inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-xs font-medium whitespace-nowrap;
+}
+@utility panel {
+  @apply rounded-2xl border border-border bg-surface p-4 shadow-sm sm:p-6;
+}
+@utility tabular {
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes flicker {

@@ -82,4 +82,40 @@ export const MIGRATIONS: string[][] = [
     )`,
     `CREATE INDEX IF NOT EXISTS password_resets_user ON password_resets(user_id)`,
   ],
+  [
+    // Admin panel: roles, suspension, notes, device info and an activity log.
+    `ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin', 'owner'))`,
+    "ALTER TABLE users ADD COLUMN suspended_at INTEGER",
+    "ALTER TABLE users ADD COLUMN suspended_reason TEXT",
+    "ALTER TABLE users ADD COLUMN admin_note TEXT",
+    "ALTER TABLE users ADD COLUMN last_login_at INTEGER",
+    // Set when an admin gives someone a temporary password; cleared when they choose their own.
+    "ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE sessions ADD COLUMN ip TEXT",
+    "ALTER TABLE sessions ADD COLUMN user_agent TEXT",
+    "ALTER TABLE sessions ADD COLUMN country TEXT",
+    "ALTER TABLE sessions ADD COLUMN city TEXT",
+    "ALTER TABLE sessions ADD COLUMN verified_at INTEGER", // last time a second factor was checked
+    `CREATE TABLE IF NOT EXISTS events (
+      id             INTEGER PRIMARY KEY,
+      at             INTEGER NOT NULL,
+      type           TEXT NOT NULL,
+      user_id        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username       TEXT,                         -- kept so history survives account deletion
+      actor_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      actor_username TEXT,
+      ip             TEXT,
+      user_agent     TEXT,
+      country        TEXT,
+      detail         TEXT,                         -- JSON
+      undo           TEXT,                         -- JSON: how to reverse an admin change, if it can be
+      reverted_at    INTEGER,
+      reverted_by    TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS events_at ON events(at)`,
+    `CREATE INDEX IF NOT EXISTS events_user_at ON events(user_id, at)`,
+    `CREATE INDEX IF NOT EXISTS events_type_at ON events(type, at)`,
+    // The site owner.
+    `UPDATE users SET role = 'owner' WHERE email = 'briefchaimyuir@gmail.com'`,
+  ],
 ];

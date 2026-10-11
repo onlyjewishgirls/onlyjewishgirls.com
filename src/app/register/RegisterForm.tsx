@@ -1,10 +1,10 @@
 "use client";
 
-import { getCountries, getCountryCallingCode } from "libphonenumber-js";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useSyncExternalStore, type ChangeEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import { FormError } from "@/components/AuthCard";
 import { PasswordChecklist } from "@/components/PasswordChecklist";
+import { useCountryOptions } from "@/components/useCountryOptions";
 import { browserTimeZone, postJson } from "@/lib/api-client";
 import { checkPassword, passwordIsValid, type PasswordRuleResult } from "@/lib/password/policy";
 import { parsePhone, validateRegistration, type FieldErrors, type RegistrationInput } from "@/lib/validation";
@@ -23,33 +23,6 @@ const EMPTY: RegistrationInput = {
   password: "",
   confirmPassword: "",
 };
-
-/** Shown first, with fixed names so the server and browser render identical HTML. */
-const PINNED_COUNTRIES: [string, string][] = [
-  ["US", "United States"],
-  ["IL", "Israel"],
-  ["CA", "Canada"],
-  ["GB", "United Kingdom"],
-];
-
-const noopSubscribe = () => () => {};
-const callingCode = (code: string) => getCountryCallingCode(code as Parameters<typeof getCountryCallingCode>[0]);
-
-function useCountryOptions() {
-  // Country names come from the runtime's ICU data, which differs between Node and browsers
-  // ("Hong Kong SAR China" vs "Hong Kong"), so the full list is only built after hydration.
-  const hydrated = useSyncExternalStore(noopSubscribe, () => true, () => false);
-  return useMemo(() => {
-    const pinned = PINNED_COUNTRIES.map(([code, name]) => ({ code, label: `${name} (+${callingCode(code)})` }));
-    if (!hydrated) return pinned;
-    const names = new Intl.DisplayNames(["en"], { type: "region" });
-    const rest = getCountries()
-      .filter((c) => !PINNED_COUNTRIES.some(([p]) => p === c))
-      .map((code) => ({ code, label: `${names.of(code) ?? code} (+${callingCode(code)})` }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-    return [...pinned, ...rest];
-  }, [hydrated]);
-}
 
 export function RegisterForm() {
   const router = useRouter();

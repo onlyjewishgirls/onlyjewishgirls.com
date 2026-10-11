@@ -17,6 +17,6 @@ export const POST = api(async (req) => {
   } catch (error) {
     console.warn("Passkey sign-in rejected:", (error as Error).message);
   }
-  if (!verified) return secondFactorFailed(guard.ctx, "That passkey didn't work. Try again or use another method.");
-  return completeSecondFactor(guard.ctx);
+  if (!verified) return secondFactorFailed(guard.ctx, "passkey", "That passkey didn't work. Try again or use another method.");
+  return completeSecondFactor(guard.ctx, "passkey");
 });

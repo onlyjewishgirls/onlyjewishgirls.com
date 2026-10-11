@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { passwordIsValid } from "@/lib/password/policy";
+import { logEvent } from "@/server/events";
 import { api, clientIp, jsonError, readJson, str, tooManyRequests } from "@/server/http";
 import { hashPassword, verifyPassword } from "@/server/passwords";
 import {
@@ -40,5 +41,6 @@ export const POST = api(async (req) => {
   await resetPassword(user.id, newHash);
   await resetRateLimit(`login:account:${user.id}`);
   sendPasswordChangedEmail(req, user);
+  await logEvent("password.reset", { user, now });
   return NextResponse.json({ next: "/login?reset=1" });
 });

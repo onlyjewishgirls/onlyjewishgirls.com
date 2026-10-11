@@ -5,9 +5,10 @@ import { getDictionary } from "@/server/dictionary";
 import { api, clientIp, jsonError, readJson, str, tooManyRequests } from "@/server/http";
 import { RESET_LINK_EXPIRED, checkNewPassword, resetLinkUser } from "@/server/password-reset";
 import { rateLimit } from "@/server/rate-limit";
+import { getAuth } from "@/server/session";
 
 /**
- * Live checklist for the sign-up and reset-password forms. The dictionary lives on the
+ * Live checklist for the sign-up, reset-password and change-password forms. The dictionary lives on the
  * server, so the browser asks here. For a reset, the account's details come from the token.
  */
 export const POST = api(async (req) => {
@@ -15,6 +16,12 @@ export const POST = api(async (req) => {
   if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
 
   const body = await readJson(req);
+  // Changing your own password while signed in: checked against your own details.
+  if (body.self === true) {
+    const auth = await getAuth();
+    if (!auth || auth.session.stage !== "full") return jsonError(401, "Please sign in again.", { next: "/login" });
+    return NextResponse.json({ rules: checkNewPassword(str(body.password), auth.user) });
+  }
   if ("resetToken" in body) {
     const user = await resetLinkUser(body.resetToken);
     if (!user) return jsonError(400, RESET_LINK_EXPIRED, { expired: true });

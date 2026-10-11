@@ -2,6 +2,7 @@ import "server-only";
 import { streakCalendar, type Place } from "@/lib/streak/calendar";
 import { localDate } from "@/lib/streak/dates";
 import { getStreakStatus, recordActivity, type StreakStatus } from "@/lib/streak/engine";
+import { logEvent } from "./events";
 import { syncPlace } from "./location";
 import { saveStreak, type StreakEvent, type User } from "./users";
 
@@ -25,6 +26,11 @@ export async function checkIn(user: User, now = Date.now()): Promise<StreakCheck
   if (result.outcome !== "same-day") {
     today = { date, outcome: result.outcome, added: result.added, previousCount: result.previousCount };
     await saveStreak(user.id, result.state, today);
+    await logEvent(`streak.${result.outcome}`, {
+      user,
+      detail: { count: result.state.count, previous: result.previousCount },
+      now,
+    });
   } else if (now - (user.streak.lastActivityAt ?? 0) > 60_000) {
     // Same day: only the deadline moves. Skip the write for reloads seconds apart.
     await saveStreak(user.id, result.state, user.streakLastEvent);

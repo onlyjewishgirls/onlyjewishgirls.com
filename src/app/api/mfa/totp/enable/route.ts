@@ -1,4 +1,5 @@
 import { decrypt } from "@/server/crypto";
+import { logEvent } from "@/server/events";
 import { api, jsonError, readJson, str } from "@/server/http";
 import { afterEnrollment, requireEnrollment } from "@/server/mfa-routes";
 import { verifyTotp } from "@/server/totp";
@@ -17,5 +18,6 @@ export const POST = api(async (req) => {
   if (step === null) return jsonError(400, "That code didn't match. Check your phone's clock and try the newest code.");
 
   await enableTotp(user.id, step, now);
+  await logEvent("mfa.totp_enabled", { user, now });
   return afterEnrollment(guard.ctx);
 });

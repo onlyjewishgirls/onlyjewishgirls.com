@@ -14,7 +14,7 @@ export const POST = api(async (req) => {
   const step = verifyTotp(decrypt(user.totpSecretEnc), code, Date.now(), user.totpLastStep);
   // claimTotpStep is atomic, so the same code can't be used twice even in parallel requests.
   if (step === null || !(await claimTotpStep(user.id, step))) {
-    return secondFactorFailed(guard.ctx, "That code didn't work. Wait for a new one and try again.");
+    return secondFactorFailed(guard.ctx, "totp", "That code didn't work. Wait for a new one and try again.");
   }
-  return completeSecondFactor(guard.ctx);
+  return completeSecondFactor(guard.ctx, "totp");
 });

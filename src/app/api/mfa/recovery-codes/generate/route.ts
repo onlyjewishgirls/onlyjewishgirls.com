@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomCode, sha256 } from "@/server/crypto";
+import { logEvent } from "@/server/events";
 import { api, jsonError } from "@/server/http";
 import { getAuth } from "@/server/session";
 import { mfaState } from "@/server/mfa";
@@ -20,5 +21,6 @@ export const POST = api(async () => {
     return `${raw.slice(0, 5)}-${raw.slice(5)}`;
   });
   await replaceRecoveryCodes(ctx.user.id, codes.map((c) => sha256(normalizeRecoveryCode(c))), Date.now());
+  await logEvent("mfa.recovery_codes", { user: ctx.user });
   return NextResponse.json({ codes, next: "/home" });
 });

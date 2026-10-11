@@ -1,4 +1,5 @@
 import "server-only";
+import { isRole, type Role } from "@/lib/admin/permissions";
 import type { ActivityOutcome, StreakState } from "@/lib/streak/engine";
 import { all, batch, first, run, type Statement } from "./db";
 
@@ -32,10 +33,19 @@ export interface User {
   latitude: number | null;
   longitude: number | null;
   country: string | null;
+  role: Role;
+  /** Set while the account is suspended: it can't sign in. */
+  suspendedAt: number | null;
+  suspendedReason: string | null;
+  /** Private note only admins see. */
+  adminNote: string | null;
+  lastLoginAt: number | null;
+  /** An admin set a temporary password; they must choose their own after signing in. */
+  mustChangePassword: boolean;
   createdAt: number;
 }
 
-interface UserRow {
+export interface UserRow {
   id: number;
   first_name: string;
   middle_name: string | null;
@@ -60,10 +70,16 @@ interface UserRow {
   latitude: number | null;
   longitude: number | null;
   country: string | null;
+  role: string;
+  suspended_at: number | null;
+  suspended_reason: string | null;
+  admin_note: string | null;
+  last_login_at: number | null;
+  must_change_password: number;
   created_at: number;
 }
 
-function toUser(row: UserRow | null): User | null {
+export function toUser(row: UserRow | null): User | null {
   if (!row) return null;
   return {
     id: row.id,
@@ -92,6 +108,12 @@ function toUser(row: UserRow | null): User | null {
     latitude: row.latitude,
     longitude: row.longitude,
     country: row.country,
+    role: isRole(row.role) ? row.role : "member",
+    suspendedAt: row.suspended_at,
+    suspendedReason: row.suspended_reason,
+    adminNote: row.admin_note,
+    lastLoginAt: row.last_login_at,
+    mustChangePassword: row.must_change_password === 1,
     createdAt: row.created_at,
   };
 }
@@ -127,11 +149,15 @@ export interface NewUser {
   webauthnUserId: string;
 }
 
-export async function createUser(u: NewUser, now: number): Promise<number> {
+export async function createUser(
+  u: NewUser,
+  now: number,
+  options: { role?: Role; mustChangePassword?: boolean } = {},
+): Promise<number> {
   const { lastRowId } = await run(
     `INSERT INTO users (first_name, middle_name, last_name, email, username, username_lower, phone_e164,
-                        password_hash, time_zone, webauthn_user_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        password_hash, time_zone, webauthn_user_id, created_at, role, must_change_password)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     u.firstName,
     u.middleName,
     u.lastName,
@@ -143,6 +169,8 @@ export async function createUser(u: NewUser, now: number): Promise<number> {
     u.timeZone,
     u.webauthnUserId,
     now,
+    options.role ?? "member",
+    options.mustChangePassword ? 1 : 0,
   );
   return lastRowId;
 }
@@ -162,6 +190,10 @@ export async function updateLocation(
     location.country,
     userId,
   );
+}
+
+export async function setLastLogin(userId: number, now: number) {
+  await run("UPDATE users SET last_login_at = ? WHERE id = ?", now, userId);
 }
 
 export async function saveStreak(userId: number, s: StreakState, event: StreakEvent | null) {
@@ -329,7 +361,8 @@ export async function findPasswordResetUser(tokenHash: string, now: number): Pro
     tokenHash,
     now,
   );
-  return row ? findUserById(row.user_id) : null;
+  const user = row ? await findUserById(row.user_id) : null;
+  return user && user.suspendedAt === null ? user : null;
 }
 
 /**
@@ -350,8 +383,144 @@ export async function claimPasswordReset(tokenHash: string, userId: number, now:
 /** Sets the new password and signs the user out everywhere. */
 export async function resetPassword(userId: number, passwordHash: string) {
   await batch([
-    ["UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, userId],
+    ["UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", passwordHash, userId],
     ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
+    ["DELETE FROM sessions WHERE user_id = ?", userId],
+  ]);
+}
+
+// ---- Admin changes ----
+
+/** Suspends the account and signs it out everywhere. */
+export async function suspendUser(userId: number, reason: string | null, now: number) {
+  await batch([
+    ["UPDATE users SET suspended_at = ?, suspended_reason = ? WHERE id = ?", now, reason, userId],
+    ["DELETE FROM sessions WHERE user_id = ?", userId],
+  ]);
+}
+
+export async function unsuspendUser(userId: number) {
+  await run("UPDATE users SET suspended_at = NULL, suspended_reason = NULL WHERE id = ?", userId);
+}
+
+/** Signs the account out everywhere, optionally keeping one session (the admin's own). */
+export async function deleteSessions(userId: number, keepIdHash: string | null = null): Promise<number> {
+  const { changes } = await run(
+    "DELETE FROM sessions WHERE user_id = ? AND id_hash IS NOT ?",
+    userId,
+    keepIdHash,
+  );
+  return changes;
+}
+
+export async function deleteSession(userId: number, idHash: string): Promise<boolean> {
+  const { changes } = await run("DELETE FROM sessions WHERE user_id = ? AND id_hash = ?", userId, idHash);
+  return changes === 1;
+}
+
+export async function removePasskey(userId: number, passkeyId: string): Promise<boolean> {
+  const { changes } = await run("DELETE FROM passkeys WHERE user_id = ? AND id = ?", userId, passkeyId);
+  return changes === 1;
+}
+
+export async function disableTotp(userId: number) {
+  await run(
+    `UPDATE users SET totp_secret_enc = NULL, totp_pending_secret_enc = NULL, totp_last_step = NULL,
+                      totp_enabled_at = NULL
+     WHERE id = ?`,
+    userId,
+  );
+}
+
+export async function clearRecoveryCodes(userId: number) {
+  await batch([
+    ["DELETE FROM recovery_codes WHERE user_id = ?", userId],
+    ["UPDATE users SET recovery_codes_created_at = NULL WHERE id = ?", userId],
+  ]);
+}
+
+/**
+ * Removes every second factor and signs the account out everywhere. Their
+ * password still works; after it they set up a passkey and an authenticator
+ * app again, as when they first registered.
+ */
+export async function resetTwoStep(userId: number) {
+  await batch([
+    ["DELETE FROM passkeys WHERE user_id = ?", userId],
+    ["DELETE FROM recovery_codes WHERE user_id = ?", userId],
+    [
+      `UPDATE users SET totp_secret_enc = NULL, totp_pending_secret_enc = NULL, totp_last_step = NULL,
+                        totp_enabled_at = NULL, recovery_codes_created_at = NULL
+       WHERE id = ?`,
+      userId,
+    ],
+    ["DELETE FROM sessions WHERE user_id = ?", userId],
+  ]);
+}
+
+export interface ProfileChanges {
+  firstName: string;
+  middleName: string | null;
+  lastName: string;
+  email: string;
+  username: string;
+  phone: string;
+}
+
+export async function updateProfile(userId: number, p: ProfileChanges) {
+  await run(
+    `UPDATE users SET first_name = ?, middle_name = ?, last_name = ?, email = ?, username = ?, username_lower = ?,
+                      phone_e164 = ?
+     WHERE id = ?`,
+    p.firstName,
+    p.middleName,
+    p.lastName,
+    p.email,
+    p.username,
+    p.username.toLowerCase(),
+    p.phone,
+    userId,
+  );
+}
+
+export async function setAdminNote(userId: number, note: string | null) {
+  await run("UPDATE users SET admin_note = ? WHERE id = ?", note, userId);
+}
+
+export async function setRole(userId: number, role: Role) {
+  await run("UPDATE users SET role = ? WHERE id = ? AND role != 'owner'", role, userId);
+}
+
+/** Deletes the account and everything attached to it. The activity log keeps the username. */
+export async function deleteUser(userId: number) {
+  await run("DELETE FROM users WHERE id = ? AND role != 'owner'", userId);
+}
+
+/**
+ * An admin-set temporary password: signs the account out everywhere, cancels
+ * reset links, and makes them choose their own password after signing in.
+ */
+export async function setTemporaryPassword(userId: number, passwordHash: string) {
+  await batch([
+    ["UPDATE users SET password_hash = ?, must_change_password = 1 WHERE id = ?", passwordHash, userId],
+    ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
+    ["DELETE FROM sessions WHERE user_id = ?", userId],
+  ]);
+}
+
+/** The user chose a new password: every other device is signed out. */
+export async function changePassword(userId: number, passwordHash: string, keepSessionIdHash: string) {
+  await batch([
+    ["UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", passwordHash, userId],
+    ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
+    ["DELETE FROM sessions WHERE user_id = ? AND id_hash != ?", userId, keepSessionIdHash],
+  ]);
+}
+
+/** Puts back a suspension exactly as it was (undoing an admin's "lift suspension"). */
+export async function restoreSuspension(userId: number, suspendedAt: number, reason: string | null) {
+  await batch([
+    ["UPDATE users SET suspended_at = ?, suspended_reason = ? WHERE id = ?", suspendedAt, reason, userId],
     ["DELETE FROM sessions WHERE user_id = ?", userId],
   ]);
 }

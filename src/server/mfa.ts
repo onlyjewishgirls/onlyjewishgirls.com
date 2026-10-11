@@ -28,11 +28,16 @@ export async function mfaState(user: User): Promise<MfaState> {
   };
 }
 
-export type NextStep = "/login/verify" | "/setup-mfa" | "/home";
+export type NextStep = "/login/verify" | "/setup-mfa" | "/change-password" | "/home";
 
-export function nextStep(stage: SessionStage, mfa: MfaState): NextStep {
+/**
+ * Where a signed-in person must go next. Choosing their own password (after an
+ * admin set a temporary one) comes last, once they're fully verified.
+ */
+export function nextStep(stage: SessionStage, mfa: MfaState, mustChangePassword = false): NextStep {
   if (stage === "password") return mfa.factors > 0 ? "/login/verify" : "/setup-mfa";
-  return mfa.complete ? "/home" : "/setup-mfa";
+  if (!mfa.complete) return "/setup-mfa";
+  return mustChangePassword ? "/change-password" : "/home";
 }
 
 /**
