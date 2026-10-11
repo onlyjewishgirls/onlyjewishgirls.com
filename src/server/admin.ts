@@ -8,6 +8,7 @@ import { getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
 import { all, first, type Param } from "./db";
 import { getPageAuth, type PageAuth } from "./guards";
 import { jsonError } from "./http";
+import { mfaState, nextStep } from "./mfa";
 import { storedPlace } from "./location";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "./mfa-routes";
 import { isRateLimited } from "./rate-limit";
@@ -41,13 +42,18 @@ export async function requireAdminPage(): Promise<PageAuth & { now: number }> {
 
 export type AdminApiGuard = { ok: true; ctx: AuthContext } | { ok: false; response: Response };
 
-/** Admin API routes: same rules as the pages. */
+/**
+ * Admin API routes: same rules as the pages. Two-step sign-in must be fully
+ * set up and any temporary password replaced before an admin can do anything.
+ */
 export async function requireAdminApi(): Promise<AdminApiGuard> {
   const ctx = await getAuth();
   if (!ctx || ctx.session.stage !== "full") {
     return { ok: false, response: jsonError(401, "Your sign-in expired. Please sign in again.", { next: "/login" }) };
   }
   if (!isAdminRole(ctx.user.role)) return { ok: false, response: jsonError(404, "Not found.") };
+  const next = nextStep(ctx.session.stage, await mfaState(ctx.user), ctx.user.mustChangePassword);
+  if (next !== "/home") return { ok: false, response: jsonError(403, "Finish signing in first.", { next }) };
   return { ok: true, ctx };
 }
 
