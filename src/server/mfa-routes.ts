@@ -4,7 +4,7 @@ import { jsonError, tooManyRequests } from "./http";
 import { canEnroll, mfaState, nextStep, type MfaState } from "./mfa";
 import { isRateLimited, rateLimit } from "./rate-limit";
 import { logEvent } from "./events";
-import { getAuth, recordMfaFailure, startSession, type AuthContext } from "./session";
+import { getAuth, recentlyVerified, recordMfaFailure, startSession, type AuthContext } from "./session";
 import { findUserById, setLastLogin } from "./users";
 
 /** How a sign-in's second step was completed. */
@@ -28,6 +28,11 @@ export async function requireEnrollment(): Promise<Guarded> {
   const mfa = await mfaState(ctx.user);
   if (!canEnroll(ctx.session.stage, mfa)) {
     return { ok: false, response: jsonError(403, "Verify your identity first.", { next: "/login/verify" }) };
+  }
+  // Someone at a signed-in device left unattended mustn't be able to attach their own passkey
+  // or authenticator to a fully set-up account. (Finishing setup right after signing in is fine.)
+  if (mfa.complete && !recentlyVerified(ctx.session)) {
+    return { ok: false, response: jsonError(403, "Sign in again to add another sign-in method.", { next: "/login" }) };
   }
   return { ok: true, ctx, mfa };
 }

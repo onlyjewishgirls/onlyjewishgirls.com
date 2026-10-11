@@ -134,7 +134,14 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
   });
 
   await test.step("changes need a fresh second factor; suspending signs them out", async () => {
-    sql(`UPDATE sessions SET verified_at = 0 WHERE user_id = (SELECT id FROM users WHERE username = '${owner.username}')`);
+    // Pretend the owner's last second-factor check (and their passkey) are from hours ago.
+    const ownerRow = `(SELECT id FROM users WHERE username = '${owner.username}')`;
+    sql(`UPDATE passkeys SET created_at = created_at - 7200000 WHERE user_id = ${ownerRow}`);
+    sql(`UPDATE sessions SET verified_at = verified_at - 3600000 WHERE user_id = ${ownerRow}`);
+    // A stale session can't attach a new passkey (and so can't use one to pass the check).
+    const enroll = await page.request.post("/api/mfa/passkey/register/options", { headers: { Origin: ORIGIN } });
+    expect(enroll.status()).toBe(403);
+
     await runAction(page, "suspend", "Suspend account", "Testing the panel");
     await expect(page.getByRole("dialog", { name: "Confirm it's you" })).toBeVisible();
     await page.getByRole("button", { name: /Use my passkey/ }).click();
@@ -146,6 +153,14 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await expect(m).toHaveURL("/login");
     await signIn(m, member.username, member.newPassword);
     await expect(m.getByText("This account has been suspended")).toBeVisible();
+  });
+
+  await test.step("a password typed as a username is never logged", async () => {
+    await signIn(m, "Wq3#Lp!Zn8Vb$Kd5", "anything");
+    await expect(m.getByText("Incorrect username/email or password.")).toBeVisible();
+    await page.goto("/admin/activity?group=signin");
+    await expect(page.locator('[data-event="signin.unknown"]').first()).toBeVisible();
+    await expect(page.getByText(/wq3#lp/i)).toHaveCount(0);
   });
 
   await test.step("the owner can undo it from the activity log", async () => {

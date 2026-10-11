@@ -5,7 +5,7 @@ export const EVENT_LABELS = {
   "signin.password": "Entered the correct password",
   "signin.failed": "Wrong password",
   "signin.unknown": "Tried to sign in to an account that doesn't exist",
-  "signin.rate_limited": "Blocked: too many sign-in attempts",
+  "signin.rate_limited": "Locked out after too many sign-in attempts",
   "signin.suspended": "Blocked: account is suspended",
   "signin.complete": "Signed in",
   "signin.mfa_failed": "Failed two-step verification",
@@ -60,7 +60,7 @@ export const EVENT_GROUPS = {
 export type EventGroup = keyof typeof EVENT_GROUPS;
 
 export function isEventGroup(value: unknown): value is EventGroup {
-  return typeof value === "string" && value in EVENT_GROUPS;
+  return typeof value === "string" && Object.hasOwn(EVENT_GROUPS, value);
 }
 
 /** Events worth a second look: shown in red. */

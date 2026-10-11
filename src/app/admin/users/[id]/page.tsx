@@ -202,7 +202,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
         <Panel title="Profile" id="profile">
           <Facts
             items={[
-              ["Email", <a key="e" href={`mailto:${u.email}`} className="link">{u.email}</a>],
+              ["Email", <a key="e" href={`mailto:${encodeURIComponent(u.email)}`} className="link">{u.email}</a>],
               ["Mobile", <a key="p" href={`tel:${u.phone}`} className="link">{formatPhone(u.phone)}</a>],
               ["Role", ROLE_LABELS[u.role]],
               ["Joined", formatDateTime(u.createdAt, tz)],
@@ -233,7 +233,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
           />
           {may("set_streak") && (
             <div className="mt-4 border-t border-border pt-4">
-              <StreakForm userId={u.id} count={u.streak.count} />
+              <StreakForm userId={u.id} username={u.username} count={u.streak.count} />
             </div>
           )}
         </Panel>
@@ -364,6 +364,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
               <div className="mt-3">
                 <EditProfileForm
                   userId={u.id}
+                  username={u.username}
                   initial={{
                     firstName: u.firstName,
                     middleName: u.middleName ?? "",
@@ -377,8 +378,8 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
               </div>
             </details>
           )}
-          {may("set_role") && <RoleForm userId={u.id} role={u.role} />}
-          {may("set_note") && <NoteForm userId={u.id} note={u.adminNote} />}
+          {may("set_role") && <RoleForm userId={u.id} username={u.username} role={u.role} />}
+          {may("set_note") && <NoteForm userId={u.id} username={u.username} note={u.adminNote} />}
         </section>
       )}
 

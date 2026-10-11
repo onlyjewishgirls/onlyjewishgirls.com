@@ -190,6 +190,13 @@ export async function recordMfaFailure(session: Session): Promise<boolean> {
   return false;
 }
 
+/** Admin changes and adding sign-in methods need a second factor checked within this long. */
+export const VERIFY_WINDOW_MS = 15 * MINUTE;
+
+export function recentlyVerified(session: Session, now = Date.now()): boolean {
+  return session.verifiedAt !== null && now - session.verifiedAt < VERIFY_WINDOW_MS;
+}
+
 /** Records a fresh second-factor check, for actions that need one (admin changes). */
 export async function markVerified(session: Session, now = Date.now()) {
   await run("UPDATE sessions SET verified_at = ? WHERE id_hash = ?", now, session.idHash);

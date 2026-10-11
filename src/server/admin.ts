@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { EVENT_GROUPS, type EventGroup } from "@/lib/admin/events";
 import { isAdminRole } from "@/lib/admin/permissions";
 import { streakCalendar } from "@/lib/streak/calendar";
-import { localDate } from "@/lib/streak/dates";
+import { bucketByDay, type DailyCount } from "@/lib/admin/days";
 import { getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
 import { all, first, type Param } from "./db";
 import { getPageAuth, type PageAuth } from "./guards";
@@ -13,17 +13,22 @@ import { storedPlace } from "./location";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "./mfa-routes";
 import { isRateLimited } from "./rate-limit";
 import { getAuth, listSessions, type AuthContext, type Session } from "./session";
+
+export { recentlyVerified, VERIFY_WINDOW_MS } from "./session";
 import { findUserById, listPasskeys, toUser, type Passkey, type User, type UserRow } from "./users";
 
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
-/** Admin changes need a second factor checked within this long (sign-in counts). */
-export const VERIFY_WINDOW_MS = 15 * 60_000;
 /** Matches the sign-in route: 10 wrong passwords in 15 minutes locks the account for a while. */
 const LOGIN_ATTEMPTS_PER_WINDOW = 10;
 /** Full sessions end after 3 days without activity (see session.ts). */
 const IDLE_MS = 3 * DAY;
+/**
+ * No streak survives this long without a check-in: 30 hours, plus at most a
+ * 3-day Yom Tov and 12 hours after it. Older streak counts are certainly over.
+ */
+const STREAK_CERTAINLY_OVER_MS = 6 * DAY;
 
 // ---- Guards ----
 
@@ -55,10 +60,6 @@ export async function requireAdminApi(): Promise<AdminApiGuard> {
   const next = nextStep(ctx.session.stage, await mfaState(ctx.user), ctx.user.mustChangePassword);
   if (next !== "/home") return { ok: false, response: jsonError(403, "Finish signing in first.", { next }) };
   return { ok: true, ctx };
-}
-
-export function recentlyVerified(session: Session, now = Date.now()): boolean {
-  return session.verifiedAt !== null && now - session.verifiedAt < VERIFY_WINDOW_MS;
 }
 
 // ---- Shared helpers ----
@@ -94,10 +95,7 @@ export function streakStatusFor(user: User, now = Date.now()): StreakStatus {
 
 // ---- Dashboard ----
 
-export interface DailyCount {
-  date: string;
-  count: number;
-}
+export type { DailyCount } from "@/lib/admin/days";
 
 export interface DashboardStats {
   totalUsers: number;
@@ -115,18 +113,6 @@ export interface DashboardStats {
   activeByDay: DailyCount[];
   topStreaks: { user: User; status: StreakStatus }[];
   recentEvents: AdminEvent[];
-}
-
-/** One entry per day for the last `days` days in `timeZone`, oldest first. */
-function bucketByDay(instants: { at: number; key: number | string | null }[], days: number, now: number, timeZone: string) {
-  const dates: string[] = [];
-  for (let i = days - 1; i >= 0; i--) dates.push(localDate(now - i * DAY, timeZone));
-  const sets = new Map(dates.map((d) => [d, new Set<number | string>()]));
-  for (const { at, key } of instants) {
-    const set = sets.get(localDate(at, timeZone));
-    if (set) set.add(key ?? `${at}`);
-  }
-  return dates.map((date) => ({ date, count: sets.get(date)!.size }));
 }
 
 export async function dashboardStats(timeZone: string, now = Date.now()): Promise<DashboardStats> {
@@ -174,13 +160,21 @@ export async function dashboardStats(timeZone: string, now = Date.now()): Promis
       MFA_FAILURES_PER_HOUR,
     ),
     all<{ created_at: number }>("SELECT created_at FROM users WHERE created_at >= ?", since(31 * DAY)),
+    // One row per person per 15 minutes (every time zone's offset is a multiple of 15 minutes,
+    // so local days still bucket exactly). Newest first, so a cap could only drop the oldest days.
     all<{ at: number; user_id: number }>(
-      `SELECT at, user_id FROM events
+      `SELECT user_id, MIN(at) AS at FROM events
        WHERE at >= ? AND user_id IS NOT NULL AND (type = 'signin.complete' OR type LIKE 'streak.%')
-       LIMIT 50000`,
+       GROUP BY user_id, at / 900000
+       ORDER BY at DESC
+       LIMIT 100000`,
       since(31 * DAY),
     ),
-    all<UserRow>("SELECT * FROM users WHERE streak_count > 0 ORDER BY streak_count DESC, streak_longest DESC LIMIT 20"),
+    all<UserRow>(
+      `SELECT * FROM users WHERE streak_count > 0 AND streak_last_activity_at >= ?
+       ORDER BY streak_count DESC, streak_longest DESC LIMIT 20`,
+      now - STREAK_CERTAINLY_OVER_MS,
+    ),
     listEvents({ limit: 8 }),
   ]);
 
@@ -231,14 +225,21 @@ export const USER_SORTS = {
 } as const;
 export type UserSort = keyof typeof USER_SORTS;
 
-const SORT_SQL: Record<UserSort, string> = {
-  newest: "u.created_at DESC",
-  oldest: "u.created_at ASC",
-  last_login: "u.last_login_at IS NULL, u.last_login_at DESC",
-  last_active: "u.streak_last_activity_at IS NULL, u.streak_last_activity_at DESC",
-  streak: "u.streak_count DESC, u.streak_longest DESC",
-  name: "u.last_name COLLATE NOCASE, u.first_name COLLATE NOCASE",
+/** `now` is a number the server computed, never user input. */
+const SORT_SQL: Record<UserSort, (now: number) => string> = {
+  newest: () => "u.created_at DESC",
+  oldest: () => "u.created_at ASC",
+  last_login: () => "u.last_login_at IS NULL, u.last_login_at DESC",
+  last_active: () => "u.streak_last_activity_at IS NULL, u.streak_last_activity_at DESC",
+  // Streaks that can still be alive first; a stored count doesn't drop to 0 until the person comes back.
+  streak: (now) =>
+    `(COALESCE(u.streak_last_activity_at, 0) >= ${Math.floor(now - STREAK_CERTAINLY_OVER_MS)}) DESC, u.streak_count DESC, u.streak_longest DESC`,
+  name: () => "u.last_name COLLATE NOCASE, u.first_name COLLATE NOCASE",
 };
+
+export const isUserFilter = (value: unknown): value is UserFilter =>
+  typeof value === "string" && Object.hasOwn(USER_FILTERS, value);
+export const isUserSort = (value: unknown): value is UserSort => typeof value === "string" && Object.hasOwn(USER_SORTS, value);
 
 export interface UserSummary {
   user: User;
@@ -267,7 +268,7 @@ export async function listUsers(
     const pattern = contains(q);
     const digits = q.replace(/\D/g, "");
     where.push(
-      `(LOWER(u.first_name || ' ' || COALESCE(u.middle_name || ' ', '') || u.last_name) LIKE ? ESCAPE '\\'
+      `(u.search_name LIKE ? ESCAPE '\\'
         OR u.username_lower LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\'
         ${digits.length >= 3 ? "OR u.phone_e164 LIKE ? ESCAPE '\\'" : ""}
         ${/^\d+$/.test(q) ? "OR u.id = ?" : ""})`,
@@ -276,7 +277,7 @@ export async function listUsers(
     if (digits.length >= 3) params.push(contains(digits));
     if (/^\d+$/.test(q)) params.push(Number(q));
   }
-  switch (options.filter ?? "all") {
+  switch (isUserFilter(options.filter) ? options.filter : "all") {
     case "active":
       where.push("u.suspended_at IS NULL");
       break;
@@ -318,7 +319,7 @@ export async function listUsers(
        (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.stage = 'full' AND s.expires_at > ?
           AND s.last_seen_at > ?) AS live_sessions
      FROM users u ${whereSql}
-     ORDER BY ${SORT_SQL[options.sort ?? "newest"]}, u.id DESC
+     ORDER BY ${SORT_SQL[isUserSort(options.sort) ? options.sort : "newest"](now)}, u.id DESC
      LIMIT ? OFFSET ?`,
     now,
     now - IDLE_MS,

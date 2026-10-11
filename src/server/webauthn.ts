@@ -10,7 +10,7 @@ import {
 } from "@simplewebauthn/server";
 import type { NextRequest } from "next/server";
 import { APP_NAME, rpIdFor } from "./env";
-import { addPasskey, findPasskey, listPasskeys, markPasskeyUsed, type User } from "./users";
+import { addPasskey, findPasskey, listPasskeys, markPasskeyUsed, type Passkey, type User } from "./users";
 
 const toTransports = (t: string[]) => t as AuthenticatorTransport[];
 
@@ -67,10 +67,13 @@ export async function verifyRegistration(
   return true;
 }
 
-export async function authenticationOptions(req: NextRequest, user: User) {
+/** `allow` limits which of the user's passkeys may be used (all of them by default). */
+export async function authenticationOptions(req: NextRequest, user: User, allow: (p: Passkey) => boolean = () => true) {
   return generateAuthenticationOptions({
     rpID: site(req).rpID,
-    allowCredentials: (await listPasskeys(user.id)).map((p) => ({ id: p.id, transports: toTransports(p.transports) })),
+    allowCredentials: (await listPasskeys(user.id))
+      .filter(allow)
+      .map((p) => ({ id: p.id, transports: toTransports(p.transports) })),
     userVerification: "required",
   });
 }
@@ -80,9 +83,10 @@ export async function verifyAuthentication(
   user: User,
   response: AuthenticationResponseJSON,
   challenge: string,
+  allow: (p: Passkey) => boolean = () => true,
 ) {
   const passkey = await findPasskey(user.id, response.id);
-  if (!passkey) return false;
+  if (!passkey || !allow(passkey)) return false;
   const { origin, rpID } = site(req);
   const { verified, authenticationInfo } = await verifyAuthenticationResponse({
     response,

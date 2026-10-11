@@ -6,14 +6,14 @@ import type { Role } from "@/lib/admin/permissions";
 import { useAdminActions } from "./AdminActions";
 import { ProfileFields, type ProfileErrors, type ProfileInput } from "./ProfileFields";
 
-function useAction(userId: number) {
+function useAction(userId: number, username: string) {
   const { act, notify } = useAdminActions();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const run = async (action: string, body: Record<string, unknown>) => {
     setBusy(true);
     setError(null);
-    const res = await act("/api/admin/action", { userId, action, ...body });
+    const res = await act("/api/admin/action", { userId, expectUsername: username, action, ...body });
     setBusy(false);
     if (res.ok) notify(typeof res.data.message === "string" ? res.data.message : "Saved.");
     else setError(res.data.error ?? "That didn't work.");
@@ -22,8 +22,8 @@ function useAction(userId: number) {
   return { run, busy, error };
 }
 
-export function EditProfileForm({ userId, initial }: { userId: number; initial: ProfileInput }) {
-  const { run, busy, error } = useAction(userId);
+export function EditProfileForm({ userId, username, initial }: { userId: number; username: string; initial: ProfileInput }) {
+  const { run, busy, error } = useAction(userId, username);
   const [form, setForm] = useState(initial);
   const [errors, setErrors] = useState<ProfileErrors>({});
   async function submit(e: FormEvent) {
@@ -42,8 +42,8 @@ export function EditProfileForm({ userId, initial }: { userId: number; initial: 
   );
 }
 
-export function StreakForm({ userId, count }: { userId: number; count: number }) {
-  const { run, busy, error } = useAction(userId);
+export function StreakForm({ userId, username, count }: { userId: number; username: string; count: number }) {
+  const { run, busy, error } = useAction(userId, username);
   const [value, setValue] = useState(String(count));
   return (
     <form
@@ -78,8 +78,8 @@ export function StreakForm({ userId, count }: { userId: number; count: number })
   );
 }
 
-export function NoteForm({ userId, note }: { userId: number; note: string | null }) {
-  const { run, busy, error } = useAction(userId);
+export function NoteForm({ userId, username, note }: { userId: number; username: string; note: string | null }) {
+  const { run, busy, error } = useAction(userId, username);
   const [value, setValue] = useState(note ?? "");
   return (
     <form
@@ -107,8 +107,8 @@ export function NoteForm({ userId, note }: { userId: number; note: string | null
   );
 }
 
-export function RoleForm({ userId, role }: { userId: number; role: Role }) {
-  const { run, busy, error } = useAction(userId);
+export function RoleForm({ userId, username, role }: { userId: number; username: string; role: Role }) {
+  const { run, busy, error } = useAction(userId, username);
   const [value, setValue] = useState<Role>(role);
   return (
     <form

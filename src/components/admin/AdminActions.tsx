@@ -46,7 +46,8 @@ export function AdminActionsProvider({
   const router = useRouter();
   const [toast, setToast] = useState<Toast | null>(null);
   const [verifyOpen, setVerifyOpen] = useState(false);
-  const pending = useRef<((ok: boolean) => void) | null>(null);
+  /** Everything waiting on the "Confirm it's you" dialog; one check retries them all. */
+  const waiting = useRef<((ok: boolean) => void)[]>([]);
 
   const notify = useCallback((message: string, tone: "success" | "error" = "success") => {
     setToast({ id: Date.now(), message, tone });
@@ -61,7 +62,7 @@ export function AdminActionsProvider({
   const askToVerify = useCallback(
     () =>
       new Promise<boolean>((resolve) => {
-        pending.current = resolve;
+        waiting.current.push(resolve);
         setVerifyOpen(true);
       }),
     [],
@@ -115,8 +116,9 @@ export function AdminActionsProvider({
 
   const finishVerify = (ok: boolean) => {
     setVerifyOpen(false);
-    pending.current?.(ok);
-    pending.current = null;
+    const resolvers = waiting.current;
+    waiting.current = [];
+    for (const resolve of resolvers) resolve(ok);
   };
 
   return (

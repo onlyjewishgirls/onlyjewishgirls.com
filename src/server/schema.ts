@@ -118,4 +118,10 @@ export const MIGRATIONS: string[][] = [
     // The site owner.
     `UPDATE users SET role = 'owner' WHERE email = 'briefchaimyuir@gmail.com'`,
   ],
+  [
+    // Full name in lowercase for admin search. SQLite's LOWER only folds A-Z, so the app
+    // writes it (see searchName in users.ts); this backfill is exact for existing ASCII names.
+    "ALTER TABLE users ADD COLUMN search_name TEXT",
+    "UPDATE users SET search_name = LOWER(first_name || ' ' || COALESCE(middle_name || ' ', '') || last_name)",
+  ],
 ];

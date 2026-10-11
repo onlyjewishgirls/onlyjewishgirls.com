@@ -55,6 +55,10 @@ export const POST = api(async (req) => {
   const target = Number.isSafeInteger(body.userId) ? await findUserById(body.userId as number) : null;
   if (!target) return jsonError(404, "That account doesn't exist anymore.");
   if (!can(actor, action, target)) return jsonError(403, "You don't have permission to do that to this account.");
+  // A page left open on a deleted account must not act on a new account that got the same id.
+  if (str(body.expectUsername) !== target.username) {
+    return jsonError(409, "This account has changed since the page loaded. Reload and try again.");
+  }
 
   const now = Date.now();
   if (!recentlyVerified(ctx.session, now)) {

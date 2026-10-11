@@ -1,6 +1,7 @@
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
 import { NextResponse } from "next/server";
 import { requireAdminApi } from "@/server/admin";
+import { factorPredates } from "@/server/admin-verify";
 import { decrypt } from "@/server/crypto";
 import { logEvent } from "@/server/events";
 import { api, jsonError, readJson, str, tooManyRequests } from "@/server/http";
@@ -27,16 +28,20 @@ export const POST = api(async (req) => {
 
   const body = await readJson(req);
   const method = body.method === "totp" ? "totp" : "passkey";
+  const predates = factorPredates(session);
   let verified = false;
   if (method === "totp") {
-    if (!user.totpSecretEnc) return jsonError(400, "You don't have an authenticator app connected.");
+    if (!user.totpSecretEnc || user.totpEnabledAt === null) return jsonError(400, "You don't have an authenticator app connected.");
+    if (!predates(user.totpEnabledAt)) return jsonError(400, "Use a passkey you had before this sign-in.");
     const step = verifyTotp(decrypt(user.totpSecretEnc), str(body.code), Date.now(), user.totpLastStep);
     verified = step !== null && (await claimTotpStep(user.id, step));
   } else {
     const challenge = await takeChallenge(session);
     if (!challenge) return jsonError(400, "That took too long. Please try again.");
     try {
-      verified = await verifyAuthentication(req, user, body.response as AuthenticationResponseJSON, challenge);
+      verified = await verifyAuthentication(req, user, body.response as AuthenticationResponseJSON, challenge, (p) =>
+        predates(p.createdAt),
+      );
     } catch (error) {
       console.warn("Admin passkey check rejected:", (error as Error).message);
     }

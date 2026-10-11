@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { bucketByDay } from "@/lib/admin/days";
 import { describeDevice, timeAgo } from "@/lib/admin/format";
 import { ADMIN_ACTIONS, allowedActions, can, canCreate, canRevert, type AdminAction, type Role } from "@/lib/admin/permissions";
 import { checkPassword, passwordIsValid } from "@/lib/password/policy";
+import { looksLikeLoginName, validateEmail } from "@/lib/validation";
 import { getDictionary } from "@/server/dictionary";
 import { generateTemporaryPassword } from "@/server/temp-password";
 
@@ -113,5 +115,71 @@ describe("admin formatting", () => {
     expect(timeAgo(now - 86_400_000, now, "UTC")).toBe("1 day ago");
     expect(timeAgo(now - 30 * 86_400_000, now, "UTC")).toBe("Sep 11, 2026");
     expect(timeAgo(null, now, "UTC")).toBe("Never");
+  });
+});
+
+describe("daily buckets", () => {
+  const tz = "America/New_York";
+  const days = (now: number) => bucketByDay([], 30, now, tz).map((d) => d.date);
+
+  it("has 30 distinct calendar days around daylight-saving changes", () => {
+    // 23:30 EST, ten days after clocks went back; 00:30 EDT, a week after they went forward.
+    for (const now of [Date.UTC(2026, 10, 11, 4, 30), Date.UTC(2026, 2, 15, 4, 30)]) {
+      const list = days(now);
+      expect(list).toHaveLength(30);
+      expect(new Set(list).size).toBe(30);
+    }
+    expect(days(Date.UTC(2026, 10, 11, 4, 30))).toContain("2026-11-01");
+    expect(days(Date.UTC(2026, 2, 15, 4, 30))).toContain("2026-03-08");
+    expect(days(Date.UTC(2026, 10, 11, 4, 30)).at(-1)).toBe("2026-11-10");
+  });
+
+  it("counts each person once per day, in the viewer's time zone", () => {
+    const now = Date.UTC(2026, 9, 11, 16);
+    const buckets = bucketByDay(
+      [
+        { at: Date.UTC(2026, 9, 11, 3), key: 1 }, // Oct 10, 11 PM in New York
+        { at: Date.UTC(2026, 9, 11, 15), key: 1 },
+        { at: Date.UTC(2026, 9, 11, 15, 30), key: 1 },
+        { at: Date.UTC(2026, 9, 11, 15, 45), key: 2 },
+      ],
+      3,
+      now,
+      tz,
+    );
+    expect(buckets).toEqual([
+      { date: "2026-10-09", count: 0 },
+      { date: "2026-10-10", count: 1 },
+      { date: "2026-10-11", count: 2 },
+    ]);
+  });
+});
+
+describe("what the sign-in log may record", () => {
+  it("keeps usernames and emails", () => {
+    expect(looksLikeLoginName("chaya_test")).toBe(true);
+    expect(looksLikeLoginName("Chaya@Example.com")).toBe(true);
+  });
+
+  it("never keeps anything that could be a password", () => {
+    expect(looksLikeLoginName("Xq7#Rv!Kz9Wm$Pd2")).toBe(false);
+    // Uses only _ and . as symbols, so it would also pass as a username.
+    expect(looksLikeLoginName("Abcde_FGH.ijk12345")).toBe(false);
+    expect(looksLikeLoginName("hunter2 with spaces")).toBe(false);
+    expect(looksLikeLoginName("")).toBe(false);
+  });
+});
+
+describe("email addresses", () => {
+  it("accepts ordinary addresses", () => {
+    for (const email of ["chaya@example.com", "o'brien+tag@mail.co.uk", "me@xn--bcher-kva.example"]) {
+      expect(validateEmail(email)).toBeUndefined();
+    }
+  });
+
+  it("rejects addresses that could add fields to a mailto: link", () => {
+    for (const email of ["me@example.com?bcc=spy%40evil%2ecom", "me@exam_ple.com", "a@b", 'x"y@example.com']) {
+      expect(validateEmail(email)).toBe("Enter a valid email address");
+    }
   });
 });

@@ -4,6 +4,8 @@ import { AccountBadges } from "@/components/admin/AccountBadges";
 import { AccountsToolbar } from "@/components/admin/AccountsToolbar";
 import { fullName, timeAgo } from "@/lib/admin/format";
 import {
+  isUserFilter,
+  isUserSort,
   listUsers,
   requireAdminPage,
   streakStatusFor,
@@ -22,10 +24,10 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
   const { user: viewer, now } = await requireAdminPage();
   const params = await searchParams;
   const q = one(params.q)?.slice(0, 100) ?? "";
-  const filter = (one(params.filter) ?? "all") as UserFilter;
-  const sort = (one(params.sort) ?? "newest") as UserSort;
-  const safeFilter: UserFilter = filter in USER_FILTERS ? filter : "all";
-  const safeSort: UserSort = sort in USER_SORTS ? sort : "newest";
+  const filter = one(params.filter);
+  const sort = one(params.sort);
+  const safeFilter: UserFilter = isUserFilter(filter) ? filter : "all";
+  const safeSort: UserSort = isUserSort(sort) ? sort : "newest";
   const result = await listUsers({ q, filter: safeFilter, sort: safeSort, page: Number(one(params.page)) || 1 }, now);
 
   const pageHref = (page: number) => {

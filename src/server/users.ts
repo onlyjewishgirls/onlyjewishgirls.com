@@ -149,6 +149,11 @@ export interface NewUser {
   webauthnUserId: string;
 }
 
+/** Lowercased full name for admin search (JavaScript lowercases É, Ó etc.; SQLite doesn't). */
+export function searchName(firstName: string, middleName: string | null, lastName: string): string {
+  return [firstName, middleName, lastName].filter(Boolean).join(" ").toLowerCase();
+}
+
 export async function createUser(
   u: NewUser,
   now: number,
@@ -156,8 +161,9 @@ export async function createUser(
 ): Promise<number> {
   const { lastRowId } = await run(
     `INSERT INTO users (first_name, middle_name, last_name, email, username, username_lower, phone_e164,
-                        password_hash, time_zone, webauthn_user_id, created_at, role, must_change_password)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        password_hash, time_zone, webauthn_user_id, created_at, role, must_change_password,
+                        search_name)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     u.firstName,
     u.middleName,
     u.lastName,
@@ -171,6 +177,7 @@ export async function createUser(
     now,
     options.role ?? "member",
     options.mustChangePassword ? 1 : 0,
+    searchName(u.firstName, u.middleName, u.lastName),
   );
   return lastRowId;
 }
@@ -470,7 +477,7 @@ export interface ProfileChanges {
 export async function updateProfile(userId: number, p: ProfileChanges) {
   await run(
     `UPDATE users SET first_name = ?, middle_name = ?, last_name = ?, email = ?, username = ?, username_lower = ?,
-                      phone_e164 = ?
+                      phone_e164 = ?, search_name = ?
      WHERE id = ?`,
     p.firstName,
     p.middleName,
@@ -479,6 +486,7 @@ export async function updateProfile(userId: number, p: ProfileChanges) {
     p.username,
     p.username.toLowerCase(),
     p.phone,
+    searchName(p.firstName, p.middleName, p.lastName),
     userId,
   );
 }
@@ -491,9 +499,20 @@ export async function setRole(userId: number, role: Role) {
   await run("UPDATE users SET role = ? WHERE id = ? AND role != 'owner'", role, userId);
 }
 
-/** Deletes the account and everything attached to it. The activity log keeps the username. */
+/**
+ * Deletes the account and everything attached to it. The activity log keeps
+ * the username. Its rate-limit counters go too: SQLite can give the next new
+ * account the same id, and it mustn't start out locked.
+ */
 export async function deleteUser(userId: number) {
-  await run("DELETE FROM users WHERE id = ? AND role != 'owner'", userId);
+  await batch([
+    ["DELETE FROM users WHERE id = ? AND role != 'owner'", userId],
+    [
+      `DELETE FROM rate_limits WHERE key IN ('login:account:' || ?1, 'mfa-failures:' || ?1, 'forgot:account:' || ?1,
+                                              'change-password:' || ?1, 'admin:' || ?1)`,
+      userId,
+    ],
+  ]);
 }
 
 /**
@@ -514,13 +533,5 @@ export async function changePassword(userId: number, passwordHash: string, keepS
     ["UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?", passwordHash, userId],
     ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
     ["DELETE FROM sessions WHERE user_id = ? AND id_hash != ?", userId, keepSessionIdHash],
-  ]);
-}
-
-/** Puts back a suspension exactly as it was (undoing an admin's "lift suspension"). */
-export async function restoreSuspension(userId: number, suspendedAt: number, reason: string | null) {
-  await batch([
-    ["UPDATE users SET suspended_at = ?, suspended_reason = ? WHERE id = ?", suspendedAt, reason, userId],
-    ["DELETE FROM sessions WHERE user_id = ?", userId],
   ]);
 }

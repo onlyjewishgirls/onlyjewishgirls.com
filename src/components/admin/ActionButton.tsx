@@ -47,7 +47,13 @@ export function ActionButton({
   async function run() {
     setBusy(true);
     setError(null);
-    const body = { userId, action, ...extra, ...(confirm?.input ? { [confirm.input.name]: value } : {}) };
+    const body = {
+      userId,
+      expectUsername: username,
+      action,
+      ...extra,
+      ...(confirm?.input ? { [confirm.input.name]: value } : {}),
+    };
     const res = await act("/api/admin/action", body);
     setBusy(false);
     if (!res.ok) {

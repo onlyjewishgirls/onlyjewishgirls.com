@@ -16,8 +16,13 @@ export async function rateLimit(key: string, limit: number, windowMs: number, no
     now + windowMs,
     now,
   );
-  if (!row || row.count <= limit) return { ok: true, retryAfterSeconds: 0 };
-  return { ok: false, retryAfterSeconds: Math.ceil((row.reset_at - now) / 1000) };
+  if (!row || row.count <= limit) return { ok: true, retryAfterSeconds: 0, firstRefusal: false };
+  return {
+    ok: false,
+    retryAfterSeconds: Math.ceil((row.reset_at - now) / 1000),
+    /** This attempt is the one that went over the limit (later ones in the window aren't). */
+    firstRefusal: row.count === limit + 1,
+  };
 }
 
 export async function resetRateLimit(key: string) {

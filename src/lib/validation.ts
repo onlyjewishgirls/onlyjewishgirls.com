@@ -20,7 +20,12 @@ export type FieldErrors = Partial<Record<keyof RegistrationInput, string>>;
 
 const NAME_PATTERN = /^[\p{L}\p{M}](?:[\p{L}\p{M}' .-]*[\p{L}\p{M}.])?$/u;
 const USERNAME_PATTERN = /^[a-zA-Z][a-zA-Z0-9_.]{2,29}$/;
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
+/**
+ * Checked after lowercasing. The usual address characters only: no `?`, `%`,
+ * quotes or brackets, which have no business in a sign-up address and could
+ * smuggle extra fields into a mailto: link.
+ */
+const EMAIL_PATTERN = /^[a-z0-9.!#$&'*+/=^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/;
 
 export const RESERVED_USERNAMES = new Set([
   "admin",
@@ -63,6 +68,25 @@ export function validateUsername(value: string): string | undefined {
   if (/\.\.|\.$/.test(username)) return "Username can't have two periods in a row or end with a period";
   if (RESERVED_USERNAMES.has(username.toLowerCase())) return "That username is reserved";
   return undefined;
+}
+
+/**
+ * Whether text someone typed as their sign-in name could be a username or
+ * email at all. Anything else (most likely a password typed in the wrong box)
+ * is never written to the activity log.
+ */
+export function looksLikeLoginName(value: string): boolean {
+  const text = value.trim();
+  const count = (re: RegExp) => text.match(re)?.length ?? 0;
+  // Shaped like a password under this site's rules: treat it as one.
+  const passwordShaped =
+    text.length >= 16 &&
+    count(/\p{Lu}/gu) >= 3 &&
+    count(/\p{Ll}/gu) >= 3 &&
+    count(/\p{Nd}/gu) >= 1 &&
+    count(/[\p{P}\p{S}]/gu) >= 1;
+  if (passwordShaped) return false;
+  return USERNAME_PATTERN.test(text) || (text.length <= 254 && EMAIL_PATTERN.test(text.toLowerCase()));
 }
 
 export function validateEmail(value: string): string | undefined {
