@@ -124,4 +124,28 @@ export const MIGRATIONS: string[][] = [
     "ALTER TABLE users ADD COLUMN search_name TEXT",
     "UPDATE users SET search_name = LOWER(first_name || ' ' || COALESCE(middle_name || ' ', '') || last_name)",
   ],
+  [
+    // Visitor log: one row per page view, signed in or not (kept 90 days).
+    `CREATE TABLE IF NOT EXISTS visits (
+      id          INTEGER PRIMARY KEY,
+      at          INTEGER NOT NULL,
+      visitor_id  TEXT NOT NULL,                   -- random id in a first-party cookie, to follow one browser
+      user_id     INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      username    TEXT,                            -- kept if the account is deleted
+      path        TEXT NOT NULL,                   -- no query string, so reset links never land here
+      referrer    TEXT,                            -- another site's address, without its query string
+      ip          TEXT,
+      country     TEXT,
+      city        TEXT,
+      asn         INTEGER,
+      network     TEXT,                            -- the visitor's ISP or hosting company
+      user_agent  TEXT,
+      language    TEXT,
+      time_zone   TEXT,
+      screen      TEXT,                            -- viewport width x height
+      bot         INTEGER NOT NULL DEFAULT 0
+    )`,
+    // One index only: D1 bills each index as another row written, and this table gets a row per page view.
+    `CREATE INDEX IF NOT EXISTS visits_at ON visits(at)`,
+  ],
 ];

@@ -390,6 +390,9 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
             See older activity
           </Link>
         )}
+        <Link href={`/admin/visitors?user=${u.id}&range=month`} className="link mt-3 block text-sm">
+          Pages they visited
+        </Link>
       </Panel>
     </div>
   );
