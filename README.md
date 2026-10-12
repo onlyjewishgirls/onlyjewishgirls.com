@@ -15,8 +15,8 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords |
-| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection |
+| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete, visitor log). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
 | `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 
@@ -106,10 +106,13 @@ npx wrangler d1 execute DB --local --command "UPDATE users SET role = 'owner' WH
 - **Accounts:** search (name, username, email, phone, ID), filters (suspended, admins, two-step not finished, joined this week, locked out), sorting, and a CSV export of every account.
 - **Account page:** profile, streak, passkeys, authenticator app, recovery codes, signed-in devices (browser, city, country, IP), lockout state, admin note, and their activity.
 - **Activity:** every sign-in, failure, lockout, two-step, password, streak and admin event, with device, country and IP. Kept for a year.
+- **Visitors:** every page view, signed in or not: page, account or guest, browser and device, city and country, IP address, network (ISP or host), the site they came from, time zone, language and window size. Totals, visitors per day, top pages, countries, referrers and networks; filter by time, signed in / guests / bots, or search. Click a guest's browser ID to see everything that browser did, or an IP to see everyone on it. Kept 90 days.
 
 **What it can do:** create accounts with a temporary password; set a temporary password; email a reset link; suspend and lift suspensions; sign out everywhere or one device; unlock sign-in; remove a passkey, turn off the authenticator app, delete recovery codes or reset two-step sign-in; edit the profile, streak, note and role; delete the account.
 
 Temporary passwords are shown to the admin once and never stored or logged. After signing in with one, the person sets up two-step sign-in if needed, then must choose their own password at `/change-password` (also linked from Home for anyone).
+
+**How visits are recorded.** `VisitTracker` (in the root layout) posts each page's path to `/api/visit` as the visitor moves around. The server adds the IP, location and network from Cloudflare, the signed-in account if any, and a random browser ID kept in a first-party cookie (`__Host-ojg_vid`, one year). Query strings are never stored, so reset links can't leak into the log; `/admin` and `/api` aren't logged; the same browser reloading a page within 30 seconds counts once; each IP address is capped at 30 logged views a minute; and the whole log stops at 10,000 views in any 24 hours (`PER_DAY` in `src/server/visits.ts`), so it can never use up D1's free daily write allowance and take sign-ins down with it.
 
 **Undo:** the owner can undo a suspension, a lifted suspension, and role, profile, streak and note changes from the activity log, once each. An undo is refused if the account has changed since.
 
@@ -136,11 +139,12 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 src/lib/password/      password rules (shared by browser + server)
 src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
 src/lib/validation.ts  registration field rules (shared)
-src/lib/admin/         admin roles/permissions, event labels, display helpers
+src/lib/admin/         admin roles/permissions, event labels, display helpers, visitor log cleaning (visits.ts)
 src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email,
-                       activity log (events.ts), admin queries and guards (admin.ts), undo (admin-undo.ts)
-src/app/api/           auth, MFA and admin endpoints
+                       activity log (events.ts), admin queries and guards (admin.ts), undo (admin-undo.ts),
+                       visitor log (visits.ts)
+src/app/api/           auth, MFA and admin endpoints, and /api/visit (page views from VisitTracker)
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password,
-                       /change-password, /home, /admin (overview, accounts, account, activity)
+                       /change-password, /home, /admin (overview, accounts, account, activity, visitors)
 tests/unit, tests/e2e  Vitest and Playwright
 ```

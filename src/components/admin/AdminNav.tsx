@@ -7,6 +7,7 @@ const TABS = [
   { href: "/admin", label: "Overview", match: (p: string) => p === "/admin" },
   { href: "/admin/users", label: "Accounts", match: (p: string) => p.startsWith("/admin/users") },
   { href: "/admin/activity", label: "Activity", match: (p: string) => p.startsWith("/admin/activity") },
+  { href: "/admin/visitors", label: "Visitors", match: (p: string) => p.startsWith("/admin/visitors") },
 ] as const;
 
 export function AdminNav() {
@@ -14,7 +15,7 @@ export function AdminNav() {
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
       <p className="text-xs font-semibold tracking-widest text-muted uppercase">Admin panel</p>
-      <nav aria-label="Admin sections" className="flex gap-1 rounded-xl border border-border bg-surface p-1 text-sm">
+      <nav aria-label="Admin sections" className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-1 text-sm">
         {TABS.map((tab) => {
           const active = tab.match(pathname);
           return (
@@ -22,7 +23,7 @@ export function AdminNav() {
               key={tab.href}
               href={tab.href}
               aria-current={active ? "page" : undefined}
-              className={`rounded-lg px-3 py-1.5 font-medium transition ${
+              className={`shrink-0 rounded-lg px-3 py-1.5 font-medium transition ${
                 active ? "bg-brand text-white dark:text-[#10132a]" : "text-muted hover:bg-brand-soft hover:text-foreground"
               }`}
             >

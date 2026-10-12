@@ -2,32 +2,17 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { DailyBars } from "@/components/admin/DailyBars";
 import { EventList } from "@/components/admin/EventList";
+import { StatTile } from "@/components/admin/StatTile";
 import { compactNumber, fullName } from "@/lib/admin/format";
 import { dashboardStats, requireAdminPage } from "@/server/admin";
 import { cfEnv } from "@/server/env";
+import { visitsToday } from "@/server/visits";
 
 export const metadata: Metadata = { title: "Admin · OnlyJewishGirls", robots: { index: false } };
 
-function StatTile({ label, value, note, href }: { label: string; value: string; note?: string; href?: string }) {
-  const body = (
-    <>
-      <p className="text-sm text-muted">{label}</p>
-      <p className="mt-1 text-3xl font-semibold tracking-tight">{value}</p>
-      {note && <p className="mt-1 text-xs text-muted">{note}</p>}
-    </>
-  );
-  return href ? (
-    <Link href={href} className="panel block transition hover:border-brand/50">
-      {body}
-    </Link>
-  ) : (
-    <div className="panel">{body}</div>
-  );
-}
-
 export default async function AdminOverviewPage() {
   const { user, now } = await requireAdminPage();
-  const stats = await dashboardStats(user.timeZone, now);
+  const [stats, visits] = await Promise.all([dashboardStats(user.timeZone, now), visitsToday(now)]);
   const env = cfEnv();
 
   const incomplete = stats.totalUsers - stats.twoStepComplete;
@@ -77,7 +62,7 @@ export default async function AdminOverviewPage() {
         </section>
       )}
 
-      <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <section aria-label="Key numbers" className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatTile
           label="Accounts"
           value={compactNumber(stats.totalUsers)}
@@ -108,6 +93,18 @@ export default async function AdminOverviewPage() {
           value={compactNumber(stats.suspended)}
           note={`${stats.admins} admin${stats.admins === 1 ? "" : "s"} including you`}
           href="/admin/users?filter=suspended"
+        />
+        <StatTile
+          label="Visitors (24 hours)"
+          value={compactNumber(visits.visitors)}
+          note="Browsers, signed in or not"
+          href="/admin/visitors"
+        />
+        <StatTile
+          label="Page views (24 hours)"
+          value={compactNumber(visits.views)}
+          note="Not counting bots"
+          href="/admin/visitors"
         />
       </section>
 

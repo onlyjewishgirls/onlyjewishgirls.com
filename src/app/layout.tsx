@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { SignOutButton } from "@/components/SignOutButton";
+import { VisitTracker } from "@/components/VisitTracker";
 import { isAdminRole } from "@/lib/admin/permissions";
 import { getAuth } from "@/server/session";
 import "./globals.css";
@@ -58,6 +59,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           </nav>
         </header>
         <main className="flex flex-1 flex-col">{children}</main>
+        <VisitTracker />
       </body>
     </html>
   );

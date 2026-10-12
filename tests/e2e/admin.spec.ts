@@ -278,6 +278,57 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     expect(query(`SELECT 1 FROM passkeys WHERE user_id = ${memberId}`)).toHaveLength(0);
   });
 
+  await test.step("the visitor log shows guests and members, never reset tokens or admin pages", async () => {
+    const guestContext = await browser.newContext({
+      baseURL: ORIGIN,
+      userAgent:
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      locale: "he-IL",
+      timezoneId: "Asia/Jerusalem",
+    });
+    const g = await guestContext.newPage();
+    const guestErrors = collectConsoleErrors(g);
+    const beacon = () => g.waitForResponse((r) => r.url().endsWith("/api/visit"));
+    let sent = beacon();
+    await g.goto("/", { referer: "http://www.google.com/search?q=onlyjewishgirls" });
+    expect((await sent).status()).toBe(204);
+    sent = beacon();
+    await g.goto("/reset-password?token=e2e-secret-token");
+    expect((await sent).status()).toBe(204);
+    expect(guestErrors).toEqual([]);
+    await guestContext.close();
+
+    expect(query("SELECT id FROM visits WHERE path LIKE '%token%' OR path LIKE '/admin%' OR path LIKE '/api%'")).toHaveLength(0);
+    expect(
+      query("SELECT path, referrer, language, user_id FROM visits WHERE time_zone = 'Asia/Jerusalem' ORDER BY id"),
+    ).toEqual([
+      { path: "/", referrer: "www.google.com/search", language: "he-IL", user_id: null },
+      { path: "/reset-password", referrer: null, language: "he-IL", user_id: null },
+    ]);
+
+    await page.goto("/admin");
+    await expect(page.getByText("Visitors (24 hours)")).toBeVisible();
+    await page.getByRole("navigation", { name: "Admin sections" }).getByRole("link", { name: "Visitors" }).click();
+    await expect(page.getByRole("heading", { name: "Visitors" })).toBeVisible();
+    const log = page.getByRole("region", { name: "Visitor log" });
+    await expect(log.locator(`[data-visit="/home"]`).filter({ hasText: `${member.username} (deleted)` }).first()).toBeVisible();
+    await expect(page.getByRole("region", { name: "Came from" })).toContainText("www.google.com");
+
+    await page.getByLabel("Who").selectOption("guests");
+    await page.getByRole("button", { name: "Filter" }).click();
+    await expect(page).toHaveURL(/kind=guests/);
+    const reset = log.locator('[data-visit="/reset-password"]');
+    await expect(reset).toContainText("Guest");
+    await expect(reset).toContainText("iPhone");
+    await expect(reset).toContainText("Asia/Jerusalem");
+    await screenshot(page, "admin-7-visitors");
+
+    await reset.getByTitle("Show everything from this browser").click();
+    await expect(page).toHaveURL(/visitor=/);
+    await expect(page.getByText("Showing visits from browser")).toBeVisible();
+    await expect(log.locator("li")).toHaveCount(2);
+  });
+
   await test.step("the overview counts it all", async () => {
     await page.goto("/admin");
     await expect(page.getByText("Signed in now")).toBeVisible();
@@ -285,6 +336,8 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await screenshot(page, "admin-5-overview-phone");
     await page.goto(`/admin/users`);
     await screenshot(page, "admin-6-accounts-phone");
+    await page.goto(`/admin/visitors`);
+    await screenshot(page, "admin-8-visitors-phone");
   });
 
   expect(ownerErrors).toEqual([]);
