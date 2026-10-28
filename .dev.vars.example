@@ -10,6 +10,9 @@ APP_SECRET=
 # Optional. Sends password-reset emails through Resend. Without these, emails are printed to the terminal.
 # EMAIL_API_KEY=re_...
 # EMAIL_FROM=OnlyJewishGirls <no-reply@onlyjewishgirls.com>
+# Optional. Plunk, the backup when Resend fails (or first with EMAIL_PRIMARY=plunk). Either key alone is enough.
+# PLUNK_API_KEY=sk_...
+# EMAIL_PRIMARY=resend
 
 # Optional. Base URL for links in emails. Defaults to the address the request came in on.
 # PUBLIC_ORIGIN=https://onlyjewishgirls.com

@@ -17,8 +17,8 @@ export default async function AdminOverviewPage() {
 
   const incomplete = stats.totalUsers - stats.twoStepComplete;
   const warnings: { text: string; href?: string }[] = [];
-  if (!env.EMAIL_API_KEY || !env.EMAIL_FROM) {
-    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add EMAIL_API_KEY and EMAIL_FROM to the Worker." });
+  if (!(env.EMAIL_API_KEY || env.PLUNK_API_KEY) || !env.EMAIL_FROM) {
+    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add EMAIL_API_KEY or PLUNK_API_KEY, and EMAIL_FROM, to the Worker." });
   }
   if (stats.lockedNow > 0) {
     warnings.push({

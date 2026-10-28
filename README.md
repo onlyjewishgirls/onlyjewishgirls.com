@@ -70,7 +70,7 @@ Safeguards:
 - Saving it signs the account out on every device and emails a "your password was changed" notice.
 - **It never skips two-step verification.** After a reset you still need your passkey, authenticator app or a recovery code, so someone who gets into your email still can't get into your account.
 
-Email goes through [Resend](https://resend.com). Until `EMAIL_API_KEY` and `EMAIL_FROM` are set (see [Deploying](#deploying-cloudflare)), local development prints the email, including the link, to the terminal. In production a missing key is logged as an error.
+Email goes through [Resend](https://resend.com), with [Plunk](https://useplunk.com) as the backup when Resend fails (`PLUNK_API_KEY`; set the `EMAIL_PRIMARY` variable to `plunk` to try Plunk first). Either key alone is enough. Until a key and `EMAIL_FROM` are set (see [Deploying](#deploying-cloudflare)), local development prints the email, including the link, to the terminal. In production a missing key is logged as an error.
 
 ## 🔥 Streak
 
@@ -130,7 +130,7 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 
 1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
 2. **Settings → Variables and Secrets:** add a secret `APP_SECRET`. Best is 32 random bytes (`openssl rand -base64 32`), but any random string of 16+ characters works, such as a UUID or a password manager's random password; it's hashed into a key. If it's missing or too short, the authenticator-app step says so on screen. Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
-3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty. Dashboard variables survive deploys because `wrangler.jsonc` sets `keep_vars: true`; without it, each `wrangler deploy` would delete them.
+3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty. For the backup, verify the same domain in Plunk and add a secret `PLUNK_API_KEY` with its secret key (`sk_…`). Dashboard variables survive deploys because `wrangler.jsonc` sets `keep_vars: true`; without it, each `wrangler deploy` would delete them.
 4. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
 
 ## Layout
