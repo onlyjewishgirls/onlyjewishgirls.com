@@ -35,6 +35,12 @@
   // EMAIL_FROM and other plain variables are managed in the dashboard. Without this,
   // every `wrangler deploy` deletes them (secrets are always kept).
   "keep_vars": true,
+  // "resend" or "plunk": which email provider goes first (src/server/mailer.ts). The other is
+  // the backup when it fails; with only one key (EMAIL_API_KEY / PLUNK_API_KEY secrets) set,
+  // that one is used alone.
+  "vars": {
+    "EMAIL_PRIMARY": "resend"
+  },
   "observability": {
     "enabled": true
   }
