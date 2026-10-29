@@ -1,6 +1,15 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { addVirtualAuthenticator, collectConsoleErrors, completeMfaSetup, query, screenshot, signIn, sql } from "./helpers";
+import {
+  addVirtualAuthenticator,
+  collectConsoleErrors,
+  completeMfaSetup,
+  dismissLeaderboard,
+  query,
+  screenshot,
+  signIn,
+  sql,
+} from "./helpers";
 
 const ORIGIN = "http://localhost:3100";
 
@@ -38,6 +47,7 @@ async function registerOwner(page: Page) {
   await expect(page).toHaveURL("/setup-mfa");
   await completeMfaSetup(page);
   await expect(page).toHaveURL("/home");
+  await dismissLeaderboard(page);
 }
 
 /** Clicks an action on the account page and confirms it if asked. */
@@ -109,6 +119,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await expect(m.locator('[data-rule="personal"]')).toHaveAttribute("data-state", "ok");
     await m.getByRole("button", { name: "Save new password" }).click();
     await expect(m).toHaveURL("/home");
+    await dismissLeaderboard(m);
   });
 
   await test.step("members can't see the admin panel or use its API", async () => {
@@ -175,6 +186,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await signIn(m, member.username, member.newPassword);
     await m.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(m).toHaveURL("/home");
+    await dismissLeaderboard(m);
   });
 
   await test.step("edit the profile, streak and note", async () => {
@@ -239,6 +251,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await m.locator("#confirmPassword").fill(member.secondPassword);
     await m.getByRole("button", { name: "Save new password" }).click();
     await expect(m).toHaveURL("/home");
+    await dismissLeaderboard(m);
   });
 
   await test.step("sign one device out remotely", async () => {

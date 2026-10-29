@@ -4,7 +4,7 @@ import { EVENT_GROUPS, type EventGroup } from "@/lib/admin/events";
 import { isAdminRole } from "@/lib/admin/permissions";
 import { streakCalendar } from "@/lib/streak/calendar";
 import { bucketByDay, type DailyCount } from "@/lib/admin/days";
-import { getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
+import { STREAK_CERTAINLY_OVER_MS, getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
 import { all, first, type Param } from "./db";
 import { getPageAuth, type PageAuth } from "./guards";
 import { jsonError } from "./http";
@@ -24,11 +24,6 @@ const DAY = 24 * HOUR;
 const LOGIN_ATTEMPTS_PER_WINDOW = 10;
 /** Full sessions end after 3 days without activity (see session.ts). */
 const IDLE_MS = 3 * DAY;
-/**
- * No streak survives this long without a check-in: 30 hours, plus at most a
- * 3-day Yom Tov and 12 hours after it. Older streak counts are certainly over.
- */
-const STREAK_CERTAINLY_OVER_MS = 6 * DAY;
 
 // ---- Guards ----
 

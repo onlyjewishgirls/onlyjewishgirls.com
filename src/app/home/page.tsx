@@ -1,18 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LeaderboardPopup } from "@/components/LeaderboardPopup";
 import { ENDS_AFTER_SUNSET_MINUTES, STARTS_BEFORE_SUNSET_MINUTES, holyPeriods } from "@/lib/streak/calendar";
 import { AFTER_HOLY_DAY_HOURS, AT_RISK_HOURS, STREAK_WINDOW_HOURS } from "@/lib/streak/engine";
 import { requirePage } from "@/server/guards";
+import { leaderboardFor } from "@/server/leaderboard";
 import { checkIn } from "@/server/streak";
 import { StreakCard } from "./StreakCard";
 
 export const metadata: Metadata = { title: "Home · OnlyJewishGirls" };
 
 const DAY = 86_400_000;
+/** How many people the sign-in popup lists. */
+const POPUP_ROWS = 10;
 
 export default async function HomePage() {
-  const { user } = await requirePage("/home");
+  const { user, session } = await requirePage("/home");
   const { status, today, place, now } = await checkIn(user);
+  const board = await leaderboardFor({ id: user.id, username: user.username, streak: status.count }, POPUP_ROWS, now);
   const next = holyPeriods(place, now, now + 8 * DAY).find((p) => p.end > now);
   const at = (instant: number) =>
     new Date(instant).toLocaleString("en-US", {
@@ -26,6 +31,8 @@ export default async function HomePage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-10">
+      {/* The first thing after signing in: shown once per sign-in, over this page. */}
+      <LeaderboardPopup board={board} sessionKey={session.createdAt} />
       <h1 className="text-3xl font-bold tracking-tight">Hi {user.firstName} 👋</h1>
 
       <StreakCard
@@ -74,7 +81,10 @@ export default async function HomePage() {
         <p className="mt-1">Keep your streak alive. You&apos;ll be the first to see what&apos;s next.</p>
       </section>
 
-      <p className="text-center text-sm">
+      <p className="flex justify-center gap-4 text-sm">
+        <Link href="/leaderboard" className="link">
+          Streak leaderboard
+        </Link>
         <Link href="/change-password" className="link">
           Change password
         </Link>

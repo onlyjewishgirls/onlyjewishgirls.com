@@ -48,8 +48,8 @@ export async function syncPlace(user: User): Promise<Place> {
   };
 }
 
-/** The user's place as last stored, for looking at someone else's streak (admin panel). */
-export function storedPlace(user: User): Place {
+/** The user's place as last stored, for looking at someone else's streak (admin panel, leaderboard). */
+export function storedPlace(user: Pick<User, "timeZone" | "country" | "latitude" | "longitude">): Place {
   return {
     timeZone: user.timeZone,
     israel: observesIsraelSchedule(user.timeZone, user.country),

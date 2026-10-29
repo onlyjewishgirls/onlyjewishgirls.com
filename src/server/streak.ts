@@ -4,7 +4,7 @@ import { localDate } from "@/lib/streak/dates";
 import { getStreakStatus, recordActivity, type StreakStatus } from "@/lib/streak/engine";
 import { logEvent } from "./events";
 import { syncPlace } from "./location";
-import { saveStreak, type StreakEvent, type User } from "./users";
+import { saveStreak, touchStreak, type StreakEvent, type User } from "./users";
 
 export interface StreakCheckIn {
   status: StreakStatus;
@@ -33,7 +33,7 @@ export async function checkIn(user: User, now = Date.now()): Promise<StreakCheck
     });
   } else if (now - (user.streak.lastActivityAt ?? 0) > 60_000) {
     // Same day: only the deadline moves. Skip the write for reloads seconds apart.
-    await saveStreak(user.id, result.state, user.streakLastEvent);
+    await touchStreak(user.id, result.state.lastActivityAt!);
   }
 
   return { status: getStreakStatus(result.state, now, calendar), today, place, now };

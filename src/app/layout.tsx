@@ -38,6 +38,12 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             <div className="flex items-center gap-2 text-sm">
               {auth ? (
                 <>
+                  {signedIn && (
+                    <Link href="/leaderboard" className="btn-secondary" aria-label="Leaderboard">
+                      <span aria-hidden>🏆</span>
+                      <span className="hidden sm:inline">Leaderboard</span>
+                    </Link>
+                  )}
                   {admin && (
                     <Link href="/admin" className="btn-secondary">
                       Admin
