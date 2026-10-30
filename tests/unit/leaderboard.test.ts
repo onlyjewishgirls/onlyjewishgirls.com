@@ -7,14 +7,8 @@ import {
   getStreakStatus,
   type StreakState,
 } from "@/lib/streak/engine";
-import {
-  buildBoard,
-  compareEntries,
-  describeStanding,
-  isStreakLive,
-  type BoardEntry,
-  type LiveBoard,
-} from "@/lib/streak/leaderboard";
+import { buildBoard, compareEntries, describeStanding, type BoardEntry, type LiveBoard } from "@/lib/streak/leaderboard";
+import { isStreakLive } from "@/lib/streak/live";
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -32,6 +26,13 @@ describe("ranking", () => {
   it("puts the longest streak first and breaks ties by username, then id", () => {
     const sorted = [entry(3, "zed", 5), entry(2, "Amy", 5), entry(1, "bob", 9), entry(4, "amy", 5)].sort(compareEntries);
     expect(sorted.map((e) => e.id)).toEqual([1, 2, 4, 3]); // bob (9), then Amy / amy (5, by id), then zed
+  });
+
+  it("sorts equal streaks by username ignoring case, then by id", () => {
+    const sorted = [entry(1, "bob", 5), entry(2, "Alice", 5), entry(3, "carol", 5), entry(4, "ALICE", 5), entry(5, "Bob", 5)].sort(
+      compareEntries,
+    );
+    expect(sorted.map((e) => e.id)).toEqual([2, 4, 1, 5, 3]); // Alice, ALICE, bob, Bob (by id), carol
   });
 
   it("gives equal streaks the same rank and skips the ranks they use up", () => {
@@ -94,10 +95,11 @@ describe("ranking", () => {
     expect(board).toEqual({ top: [], you: null, youInTop: false, total: 0 });
   });
 
-  it("only exposes usernames and counts: no ids", () => {
+  it("only exposes what a page shows: exactly the rank, username, days and who you are", () => {
     const board = buildBoard(live([entry(7, "a", 3)]), entry(8, "me", 2), 10);
-    for (const row of [...board.top, board.you!]) expect(Object.keys(row).sort()).toEqual(expect.arrayContaining(["days", "rank", "username", "you"]));
-    expect(JSON.stringify(board)).not.toMatch(/"id"/);
+    for (const row of board.top) expect(Object.keys(row).sort()).toEqual(["days", "rank", "username", "you"]);
+    expect(Object.keys(board.you!).sort()).toEqual(["atLeast", "days", "rank", "tied", "username", "you"]);
+    expect(Object.keys(board).sort()).toEqual(["top", "total", "you", "youInTop"]);
   });
 
   describe("when the database read stopped early", () => {

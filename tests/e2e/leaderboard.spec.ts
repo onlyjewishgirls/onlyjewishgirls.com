@@ -3,7 +3,6 @@ import {
   addVirtualAuthenticator,
   collectConsoleErrors,
   completeMfaSetup,
-  query,
   screenshot,
   signIn,
   signOut,
@@ -60,6 +59,15 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
   const rows = (scope: Page | Locator = page) => scope.locator("[data-testid=leaderboard-list] li[data-rank]");
   const names = async (scope: Page | Locator = page) => rows(scope).evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.username));
   const ranks = async (scope: Page | Locator = page) => rows(scope).evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.rank));
+  /** The trophy button in the header (not the link in the page's footer). */
+  const headerLink = (p: Page) => p.locator("header").getByRole("link", { name: "Leaderboard", exact: true });
+  const fitsAcross = (p: Page) => p.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+  /** Only usernames and streak lengths leave the server: no ids, names, emails or phone numbers. */
+  const expectNothingPrivate = (html: string) => {
+    for (const bit of ["seed.example", "@example.com", "212-555", "+12125550100", "not-a-hash", "Seed Person", "webauthn"]) {
+      expect(html, bit).not.toContain(bit);
+    }
+  };
   const secret = await test.step("a new member signs up", async () => {
     await page.goto("/register");
     await page.getByLabel("First name").fill(viewer.firstName);
@@ -94,9 +102,14 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     await expect(popup.getByTestId("leaderboard-standing")).toHaveText(/^You're (tied for )?#\d+( of \d+ live streaks)? with a 1-day streak\.$/);
     await screenshot(page, "leaderboard-1-popup");
 
-    // A real modal: keyboard focus stays inside it, and the page behind can't be clicked.
+    // The serialized page (the board is passed to the popup as data) holds nothing private.
+    expectNothingPrivate(await page.content());
+
+    // A real modal: Continue has the focus, it stays inside the popup, and the page behind can't be clicked or scrolled.
+    await expect(popup.getByRole("button", { name: "Continue" })).toBeFocused();
     await page.keyboard.press("Tab");
     expect(await popup.evaluate((el) => el.contains(document.activeElement))).toBe(true);
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("hidden");
     const behindIsClickable = await page.evaluate(() => {
       const button = [...document.querySelectorAll("button")].find((b) => b.textContent?.trim() === "Sign out")!;
       const { x, y, width, height } = button.getBoundingClientRect();
@@ -105,6 +118,7 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     expect(behindIsClickable).toBe(false);
     await page.keyboard.press("Escape");
     await expect(popup).toBeHidden();
+    expect(await page.evaluate(() => getComputedStyle(document.body).overflow)).toBe("visible");
   });
 
   await test.step("it doesn't come back during the same sign-in", async () => {
@@ -116,7 +130,7 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
   });
 
   await test.step("the full leaderboard is one click away", async () => {
-    await page.getByRole("link", { name: "Leaderboard" }).first().click();
+    await headerLink(page).click();
     await expect(page).toHaveURL("/leaderboard");
     await expect(page.getByRole("heading", { name: /Streak leaderboard/ })).toBeVisible();
     expect((await names()).slice(0, 5)).toEqual(["lb_alice", "lb_bob", "lb_carol", "lb_dina", "lb_eli"]);
@@ -126,11 +140,7 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     await expect(you).toContainText("1 day");
     await screenshot(page, "leaderboard-2-page");
 
-    // Only usernames and streak lengths leave the server: no ids, names, emails or phone numbers.
-    const html = await page.content();
-    for (const secretBit of ["seed.example", "@example.com", "212-555", "+12125550100", "not-a-hash", "Seed Person", "webauthn"]) {
-      expect(html, secretBit).not.toContain(secretBit);
-    }
+    expectNothingPrivate(await page.content());
   });
 
   await test.step("the board follows the rules: suspending someone or reviving a streak shows up straight away", async () => {
@@ -155,8 +165,15 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     await expect(page).toHaveURL("/home");
     await expect(popup).toBeVisible();
     await expect(popup.getByTestId("leaderboard-standing")).toContainText("1-day streak");
-    await popup.getByRole("link", { name: "Full leaderboard" }).click();
-    await expect(page).toHaveURL("/leaderboard");
+    // Dragging a text selection out onto the dimmed backdrop doesn't close it, but clicking the backdrop does.
+    const title = (await popup.getByRole("heading", { name: /Streak leaderboard/ }).boundingBox())!;
+    await page.mouse.move(title.x + 20, title.y + title.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(5, 300, { steps: 5 });
+    await page.mouse.up();
+    await expect(popup).toBeVisible();
+    await page.mouse.click(5, 300);
+    await expect(popup).toBeHidden();
   });
 
   await test.step("it fits a phone", async () => {
@@ -170,15 +187,44 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(375);
     expect(box.y + box.height).toBeLessThanOrEqual(667);
+    // Even on a short screen the buttons stay in view (the list scrolls) and Continue has the focus.
     await expect(popup.getByRole("button", { name: "Continue" })).toBeInViewport();
+    await expect(popup.getByRole("button", { name: "Continue" })).toBeFocused();
     await screenshot(page, "leaderboard-3-popup-phone");
-    await popup.getByRole("button", { name: "Continue" }).click();
-    // The nav shows just the trophy on a narrow screen, and nothing runs off the side.
-    await expect(page.getByRole("link", { name: "Leaderboard" }).first()).toBeVisible();
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    await page.goto("/leaderboard");
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    // The popup's own link goes to the full page.
+    await popup.getByRole("link", { name: "Full leaderboard" }).click();
+    await expect(page).toHaveURL("/leaderboard");
+    // The header shows just the trophy on a narrow screen, and nothing runs off the side.
+    await expect(headerLink(page)).toHaveText("🏆", { useInnerText: true });
+    expect(await fitsAcross(page)).toBe(true);
     await screenshot(page, "leaderboard-4-page-phone");
+  });
+
+  await test.step("an admin's header still fits the narrowest phones", async () => {
+    sql(`UPDATE users SET role = 'admin' WHERE username = '${viewer.username}'`);
+    for (const width of [360, 320]) {
+      await page.setViewportSize({ width, height: 640 });
+      await page.goto("/leaderboard");
+      await expect(page.locator("header").getByRole("link", { name: "Admin", exact: true })).toBeVisible();
+      // Nothing runs off the side, and the buttons stay on one line (about 42px tall): the header wraps instead.
+      expect(await fitsAcross(page), `${width}px`).toBe(true);
+      const height = await page.getByRole("button", { name: "Sign out" }).evaluate((el) => el.getBoundingClientRect().height);
+      expect(height, `${width}px`).toBeLessThan(50);
+      await screenshot(page, `leaderboard-5-admin-header-${width}`);
+    }
+    expect(await headerLink(page).evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("12px"); // the compact padding applies
+  });
+
+  await test.step("a very long username can't push the You badge out of its row", async () => {
+    const long = "v".repeat(58);
+    sql(`UPDATE users SET username = '${long}', username_lower = '${long}' WHERE username = '${viewer.username}'`);
+    await page.reload();
+    const you = page.locator('[data-testid=leaderboard-list] li[data-you="true"]');
+    await expect(you).toHaveAttribute("data-username", long);
+    await you.scrollIntoViewIfNeeded(); // the row may be below the fold on a short screen
+    await expect(you.locator(".badge")).toBeInViewport({ ratio: 1 }); // all of it, not clipped at the edge
+    expect(await fitsAcross(page)).toBe(true);
+    sql(`UPDATE users SET username = '${viewer.username}', username_lower = '${viewer.username}' WHERE username = '${long}'`);
   });
 
   await test.step("visitors who aren't signed in see none of it", async () => {
@@ -187,18 +233,11 @@ test("the streak leaderboard pops up after signing in and ranks only live streak
     await g.goto("/");
     await g.waitForLoadState("networkidle");
     await expect(g.getByTestId("leaderboard-popup")).toHaveCount(0);
-    await expect(g.getByRole("link", { name: "Leaderboard" })).toHaveCount(0);
+    await expect(headerLink(g)).toHaveCount(0);
     await g.goto("/leaderboard");
     await expect(g).toHaveURL("/login");
     await guest.close();
   });
 
   expect(errors).toEqual([]);
-
-  // The index keeps the board cheap to read (see migration 6).
-  const plan = query<{ detail: string }>(
-    `EXPLAIN QUERY PLAN SELECT id FROM users WHERE streak_count > 0 AND streak_last_activity_at >= 0 AND suspended_at IS NULL
-     ORDER BY streak_count DESC, id DESC LIMIT 200`,
-  );
-  expect(plan.map((p) => p.detail).join(" ")).toContain("users_streak");
 });

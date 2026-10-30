@@ -104,6 +104,11 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* A popup (the streak leaderboard) holds the page still behind it. */
+body:has(dialog[open]) {
+  overflow: hidden;
+}
+
 @keyframes flicker {
   0%, 100% { transform: scale(1) rotate(-2deg); }
   50% { transform: scale(1.06) rotate(2deg); }

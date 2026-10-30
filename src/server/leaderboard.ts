@@ -1,21 +1,28 @@
 import "server-only";
 import { STREAK_CERTAINLY_OVER_MS } from "@/lib/streak/engine";
-import { buildBoard, compareEntries, isStreakLive, type Board, type BoardEntry, type LiveBoard } from "@/lib/streak/leaderboard";
+import { buildBoard, compareEntries, type Board, type BoardEntry, type LiveBoard } from "@/lib/streak/leaderboard";
+import { leaderboardQuery } from "@/lib/streak/leaderboard-query";
+import { isStreakLive } from "@/lib/streak/live";
 import { all } from "./db";
 import { cfEnv } from "./env";
 import { storedPlace } from "./location";
 
 /** Rows read per query, and the most queries per refresh. */
 const PAGE_SIZE = 200;
-const MAX_PAGES = 5;
+const MAX_PAGES = 3;
 /**
  * Keep reading until this many live streaks are found, so the top of the board is
  * exact even when people with long streaks have just let theirs lapse.
  */
 const WANT_LIVE = 100;
-const DEFAULT_CACHE_MS = 60_000;
+/**
+ * How long a Worker instance reuses what it read. Streaks move a day at a time and the
+ * viewer's own row is always current, so a few minutes' delay is invisible; the read
+ * costs rows on D1's free plan, which grows with everyone who ever checked in.
+ */
+const DEFAULT_CACHE_MS = 5 * 60_000;
 
-/** Only what the streak rules need: never password hashes or contact details. */
+/** One row of leaderboardQuery (src/lib/streak/leaderboard-query.ts lists the columns). */
 interface Row {
   id: number;
   username: string;
@@ -43,10 +50,9 @@ function isLive(row: Row, now: number): boolean {
 }
 
 /**
- * Live streaks, longest first. Reads from the streak_count index in order, so it
- * touches about a page of rows rather than every user, and skips suspended
- * accounts. A page holds `PAGE_SIZE` rows; the loop stops once enough live
- * streaks are found.
+ * Live streaks, longest first. Reads the users(streak_count) index from the top, a page at a
+ * time, until it has found enough live streaks. Suspended accounts and anyone whose last check-in
+ * is too old to be alive are skipped; the rest are checked against the streak rules.
  */
 async function readLiveBoard(now: number): Promise<LiveBoard> {
   const entries: BoardEntry[] = [];
@@ -55,21 +61,10 @@ async function readLiveBoard(now: number): Promise<LiveBoard> {
   let floor = 0;
 
   for (let page = 0; page < MAX_PAGES && !complete; page++) {
-    const rows: Row[] = await all<Row>(
-      `SELECT id, username, streak_count, streak_longest, streak_last_activity_at, streak_last_counted_date,
-              streak_started_at, time_zone, country, latitude, longitude
-       FROM users
-       WHERE streak_count > 0 AND streak_last_activity_at >= ? AND suspended_at IS NULL
-         AND (? IS NULL OR streak_count < ? OR (streak_count = ? AND id < ?))
-       ORDER BY streak_count DESC, id DESC
-       LIMIT ?`,
-      now - STREAK_CERTAINLY_OVER_MS,
-      after && after.count,
-      after && after.count,
-      after && after.count,
-      after && after.id,
-      PAGE_SIZE,
-    );
+    const cutoff = now - STREAK_CERTAINLY_OVER_MS;
+    const rows: Row[] = after
+      ? await all<Row>(leaderboardQuery(true), cutoff, after.count, after.id, PAGE_SIZE)
+      : await all<Row>(leaderboardQuery(false), cutoff, PAGE_SIZE);
     for (const row of rows) {
       if (isLive(row, now)) entries.push({ id: row.id, username: row.username, count: row.streak_count });
     }
@@ -90,12 +85,14 @@ async function readLiveBoard(now: number): Promise<LiveBoard> {
 let cached: { at: number; board: LiveBoard } | undefined;
 
 function cacheMs(): number {
-  const seconds = Number(cfEnv().LEADERBOARD_CACHE_SECONDS?.trim() || NaN);
+  // Variables set as text are strings; one added as JSON in the dashboard could be a number.
+  const raw: unknown = cfEnv().LEADERBOARD_CACHE_SECONDS;
+  const seconds = typeof raw === "number" ? raw : Number(String(raw ?? "").trim() || NaN);
   return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : DEFAULT_CACHE_MS;
 }
 
 /**
- * The shared read, reused for a minute by each Worker instance so a busy home page
+ * The shared read, reused for a few minutes by each Worker instance so a busy home page
  * doesn't read the database on every view. (Only a finished result is kept; sharing
  * an in-flight promise between requests isn't allowed on Workers.)
  */

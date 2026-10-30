@@ -26,10 +26,10 @@ function Row({ row, atLeast = false }: { row: BoardRow; atLeast?: boolean }) {
           </>
         )}
       </span>
-      <span className="min-w-0 flex-1 truncate font-medium">
+      <span className="min-w-0 flex-1 truncate font-medium" title={row.username}>
         {row.username}
-        {row.you && <span className="badge ml-2 align-middle">You</span>}
       </span>
+      {row.you && <span className="badge shrink-0">You</span>}
       <span className="tabular shrink-0 font-semibold">
         {row.days}
         <span className="font-normal text-muted"> {row.days === 1 ? "day" : "days"}</span>

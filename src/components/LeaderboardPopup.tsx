@@ -15,6 +15,9 @@ const STORAGE_KEY = "ojg-leaderboard-shown";
  */
 export function LeaderboardPopup({ board, sessionKey }: { board: Board; sessionKey: number }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const continueButton = useRef<HTMLButtonElement>(null);
+  // Where a click started: dragging a text selection out onto the backdrop shouldn't close the popup.
+  const pressedOnBackdrop = useRef(false);
 
   useEffect(() => {
     const element = dialog.current;
@@ -26,6 +29,8 @@ export function LeaderboardPopup({ board, sessionKey }: { board: Board; sessionK
       // Storage blocked: the popup then shows each time the home page loads, which beats never showing it.
     }
     element.showModal();
+    // Not left to the browser: on a short screen it picks the list's scroll area instead.
+    continueButton.current?.focus();
   }, [sessionKey]);
 
   const close = () => dialog.current?.close();
@@ -38,8 +43,11 @@ export function LeaderboardPopup({ board, sessionKey }: { board: Board; sessionK
       // `open:flex`, not `flex`: a closed dialog must stay hidden. The list scrolls while the heading and buttons stay put.
       className="m-auto max-h-[calc(100dvh-2rem)] w-[min(30rem,calc(100%-2rem))] flex-col overflow-hidden rounded-2xl border border-border bg-surface p-0 text-foreground shadow-2xl backdrop:bg-black/50 open:flex"
       // Only a click on the dimmed backdrop lands on the dialog itself.
+      onMouseDown={(event) => {
+        pressedOnBackdrop.current = event.target === event.currentTarget;
+      }}
       onClick={(event) => {
-        if (event.target === event.currentTarget) close();
+        if (event.target === event.currentTarget && pressedOnBackdrop.current) close();
       }}
     >
       <div className="space-y-3 px-5 pt-5 sm:px-6 sm:pt-6">
@@ -53,11 +61,11 @@ export function LeaderboardPopup({ board, sessionKey }: { board: Board; sessionK
           {describeStanding(board.you, board.total)}
         </p>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-4">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4">
         <LeaderboardList board={board} label="Top streaks" />
       </div>
       <div className="flex flex-wrap gap-2 border-t border-border px-5 py-4 sm:px-6">
-        <button type="button" className="btn-primary" onClick={close}>
+        <button ref={continueButton} type="button" className="btn-primary" onClick={close}>
           Continue
         </button>
         <Link href="/leaderboard" className="btn-secondary">

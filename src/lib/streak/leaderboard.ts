@@ -1,21 +1,5 @@
 /** Ranking for the streak leaderboard. Pure, so it's unit-tested. */
 
-import { streakCalendar, type Place } from "./calendar";
-import { STREAK_WINDOW_HOURS, getStreakStatus, type StreakState } from "./engine";
-
-/**
- * Whether a stored streak is still alive at `now`: the same answer as
- * `getStreakStatus(...).alive`, but anyone who checked in within the window is
- * alive without consulting the calendar (Shabbat and Yom Tov only ever move a
- * deadline later), which is nearly everyone on the board.
- */
-export function isStreakLive(state: StreakState, place: Place, now: number): boolean {
-  if (state.count > 0 && state.lastActivityAt !== null && now - state.lastActivityAt <= STREAK_WINDOW_HOURS * 3_600_000) {
-    return true;
-  }
-  return getStreakStatus(state, now, streakCalendar(place)).alive;
-}
-
 /** One person's live streak. */
 export interface BoardEntry {
   id: number;

@@ -46,7 +46,7 @@ export default async function LeaderboardPage() {
             Shabbat and Yom Tov never count against you: your deadline moves to at least {AFTER_HOLY_DAY_HOURS} hours
             after they end.
           </li>
-          <li>Equal streaks share a rank. The list refreshes about once a minute; your own row is always current.</li>
+          <li>Equal streaks share a rank. The list refreshes every few minutes; your own row is always current.</li>
         </ul>
       </section>
 

@@ -1,47 +1,55 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LEADERBOARD_COLUMNS } from "@/lib/streak/leaderboard-query";
 
-// A stand-in for the users table, answering the leaderboard's query the way SQLite would.
+// A stand-in for the users table, answering the leaderboard's query the way SQLite would (the query
+// itself runs on real SQLite in leaderboard-sql.test.ts). It returns only the columns the query selects,
+// so a column the code needs but the query forgot would show up here as a missing value.
 interface FakeUser {
   id: number;
   username: string;
   streak_count: number;
   streak_last_activity_at: number;
   suspended?: boolean;
+  time_zone?: string;
+  country?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 let users: FakeUser[] = [];
-let cacheSeconds: string | undefined;
+let cacheSeconds: string | number | undefined;
 const queries: { sql: string; params: unknown[] }[] = [];
 
 vi.mock("@/server/db", () => ({
   all: async (sql: string, ...params: unknown[]) => {
     queries.push({ sql, params });
-    const [cutoff, cursorCount, , , cursorId, limit] = params as [number, number | null, number, number, number | null, number];
+    const selected = sql.slice(sql.indexOf("SELECT") + 6, sql.indexOf("FROM")).split(",").map((c) => c.trim());
+    // First page: (cutoff, limit). Later pages: (cutoff, count, id, limit).
+    const [cutoff, ...rest] = params as number[];
+    const limit = rest.pop()!;
+    const cursor = rest.length === 2 ? { count: rest[0], id: rest[1] } : null;
     return users
       .filter((u) => u.streak_count > 0 && u.streak_last_activity_at >= cutoff && !u.suspended)
-      .filter((u) => cursorCount === null || u.streak_count < cursorCount || (u.streak_count === cursorCount && u.id < cursorId!))
+      .filter((u) => !cursor || u.streak_count < cursor.count || (u.streak_count === cursor.count && u.id < cursor.id))
       .sort((a, b) => b.streak_count - a.streak_count || b.id - a.id)
       .slice(0, limit)
-      .map((u) => ({
-        ...u,
-        streak_longest: u.streak_count,
-        streak_last_counted_date: "2026-10-27",
-        streak_started_at: 0,
-        time_zone: "America/New_York",
-        country: null,
-        latitude: null,
-        longitude: null,
-      }));
+      .map((u) => {
+        const full: Record<string, unknown> = {
+          ...u,
+          streak_longest: u.streak_count,
+          streak_last_counted_date: "2026-10-27",
+          streak_started_at: 0,
+          time_zone: u.time_zone ?? "America/New_York",
+          country: u.country ?? null,
+          latitude: u.latitude ?? null,
+          longitude: u.longitude ?? null,
+        };
+        return Object.fromEntries(selected.map((column) => [column, full[column]]));
+      });
   },
 }));
 vi.mock("@/server/env", () => ({ cfEnv: () => ({ LEADERBOARD_CACHE_SECONDS: cacheSeconds }) }));
-vi.mock("@/server/location", () => ({
-  storedPlace: (u: { timeZone: string; latitude: number | null; longitude: number | null }) => ({
-    timeZone: u.timeZone,
-    israel: false,
-    latitude: u.latitude,
-    longitude: u.longitude,
-  }),
-}));
+// The real calendar and place logic run; only the Cloudflare runtime they import is stubbed.
+vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext: () => ({}) }));
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -93,6 +101,65 @@ describe("reading the board", () => {
     expect(queries[0].params[0]).toBe(NOW - 7 * DAY);
   });
 
+  describe("keeps members who observe Shabbat and Yom Tov on the board, using where they are", () => {
+    // Checked in Friday 10 AM in New York. 30 hours on is Saturday afternoon, in the middle of Shabbat.
+    const friday = Date.parse("2026-10-30T14:00:00Z");
+    const sundayEarly = Date.parse("2026-11-01T09:00:00Z"); // 04:00 New York, 43 hours on
+    const sundayLate = Date.parse("2026-11-01T14:00:00Z"); // 09:00 New York: more than 12 hours after Shabbat
+    const ny = { latitude: 40.71, longitude: -74.0 };
+
+    const row = (id: number, extra: Partial<FakeUser> = {}): FakeUser => ({
+      id,
+      username: `user${id}`,
+      streak_count: 20,
+      streak_last_activity_at: friday,
+      ...extra,
+    });
+    const onBoardAt = async (now: number, ...rows: FakeUser[]) => {
+      users = rows;
+      const { leaderboardFor } = await load();
+      return (await leaderboardFor(viewer(0), 10, now)).top.map((r) => r.username);
+    };
+
+    it("still on after Shabbat, and off once the 12 hours after it have passed", async () => {
+      expect(sundayEarly - friday).toBeGreaterThan(30 * HOUR); // a plain 30-hour rule would have dropped them
+      expect(await onBoardAt(sundayEarly, row(1, ny))).toEqual(["user1"]);
+      expect(await onBoardAt(sundayLate, row(1, ny))).toEqual([]);
+    });
+
+    it("the same when the place is unknown (the cautious whole-day window)", async () => {
+      // Shabbat is assumed to run until 3 AM Sunday, so the deadline is Sunday 15:00 New York time.
+      expect(await onBoardAt(sundayEarly, row(1))).toEqual(["user1"]);
+      expect(await onBoardAt(Date.parse("2026-11-01T19:00:00Z"), row(1))).toEqual(["user1"]); // 14:00
+      expect(await onBoardAt(Date.parse("2026-11-01T21:00:00Z"), row(1))).toEqual([]); // 16:00
+    });
+
+    it("reads each member's own time zone, country and coordinates from their row", async () => {
+      // Shemini Atzeret 2026 is one day in Israel and two in the Diaspora, so the same Friday check-in
+      // lasts about a day longer in New York. The engine is the oracle; this checks the row reaches it.
+      const { computeDeadline } = await import("@/lib/streak/engine");
+      const { streakCalendar } = await import("@/lib/streak/calendar");
+      const checkIn = { new_york: Date.parse("2026-10-02T14:00:00Z"), jerusalem: Date.parse("2026-10-02T07:00:00Z") };
+      const places = {
+        new_york: { timeZone: "America/New_York", israel: false, latitude: 40.71, longitude: -74.0 },
+        jerusalem: { timeZone: "Asia/Jerusalem", israel: true, latitude: 31.77, longitude: 35.21 },
+      };
+      const deadline = {
+        new_york: computeDeadline(checkIn.new_york, streakCalendar(places.new_york)).deadline,
+        jerusalem: computeDeadline(checkIn.jerusalem, streakCalendar(places.jerusalem)).deadline,
+      };
+      expect(deadline.new_york - deadline.jerusalem).toBeGreaterThan(24 * HOUR); // the scenario means something
+
+      const members = [
+        row(1, { streak_last_activity_at: checkIn.new_york, time_zone: "America/New_York", country: "US", ...ny }),
+        row(2, { streak_last_activity_at: checkIn.jerusalem, time_zone: "Asia/Jerusalem", country: "IL", latitude: 31.77, longitude: 35.21 }),
+      ];
+      expect(await onBoardAt(deadline.jerusalem - HOUR, ...members)).toEqual(["user1", "user2"]);
+      expect(await onBoardAt(deadline.jerusalem + HOUR, ...members)).toEqual(["user1"]); // Israel's is over, New York's isn't
+      expect(await onBoardAt(deadline.new_york + HOUR, ...members)).toEqual([]);
+    });
+  });
+
   it("never asks for passwords, emails, phone numbers or whole rows", async () => {
     users = [user(1, 5, 1)];
     const { leaderboardFor } = await load();
@@ -102,6 +169,7 @@ describe("reading the board", () => {
     for (const column of ["password_hash", "email", "phone", "first_name", "last_name", "totp", "webauthn", "admin_note"]) {
       expect(sql, column).not.toContain(column);
     }
+    for (const column of LEADERBOARD_COLUMNS) expect(sql).toContain(column);
   });
 
   it("stops reading once it has enough live streaks, and then only claims a rank it is sure of", async () => {
@@ -134,9 +202,10 @@ describe("reading the board", () => {
     // 500 people on the same streak, nine in ten of them lapsed, so it keeps reading until the table runs out.
     users = Array.from({ length: 500 }, (_, i) => user(i + 1, 7, (i + 1) % 10 === 0 ? 2 : 165));
     const { leaderboardFor } = await load();
+    // (Three pages is the most it will read, which covers 600 rows.)
     const board = await leaderboardFor(viewer(0), 500, NOW);
     expect(queries).toHaveLength(3); // 200 + 200 + 100 rows
-    const alive = users.filter((u) => (u.id % 10) === 0).map((u) => u.username).sort();
+    const alive = users.filter((u) => u.id % 10 === 0).map((u) => u.username).sort();
     expect(board.top.map((r) => r.username).sort()).toEqual(alive);
     expect(board.total).toBe(50);
   });
@@ -145,8 +214,8 @@ describe("reading the board", () => {
     users = Array.from({ length: 1500 }, (_, i) => user(i + 1, 5000 - i, 165)); // all lapsed
     const { leaderboardFor } = await load();
     const board = await leaderboardFor(viewer(3), 10, NOW);
-    expect(queries).toHaveLength(5);
-    // The 500 rows it never reached might still hold live streaks, so rank 1 is only a lower bound.
+    expect(queries).toHaveLength(3);
+    // The rows it never reached might still hold live streaks, so rank 1 is only a lower bound.
     expect(board.you).toMatchObject({ rank: 1, atLeast: true });
     expect(board.total).toBeNull();
   });
@@ -170,36 +239,45 @@ describe("the cache", () => {
     users = [user(1, 5, 1)];
   });
 
-  it("is reused for a minute, then read again", async () => {
+  it("is reused for five minutes, then read again", async () => {
     const { leaderboardFor } = await load();
     await leaderboardFor(viewer(1), 10, NOW);
-    await leaderboardFor(viewer(1), 10, NOW + 59_999);
+    await leaderboardFor(viewer(1), 10, NOW + 299_999);
     expect(queries).toHaveLength(1);
-    await leaderboardFor(viewer(1), 10, NOW + 60_000);
+    await leaderboardFor(viewer(1), 10, NOW + 300_000);
     expect(queries).toHaveLength(2);
   });
 
-  it("can be switched off (the end-to-end tests do) or tuned, and ignores nonsense", async () => {
-    cacheSeconds = "0";
-    let { leaderboardFor } = await load();
-    await leaderboardFor(viewer(1), 10, NOW);
-    await leaderboardFor(viewer(1), 10, NOW);
-    expect(queries).toHaveLength(2);
+  it("can be switched off (the end-to-end tests do) or tuned, whether set as text or as a number", async () => {
+    for (const off of ["0", 0]) {
+      queries.length = 0;
+      cacheSeconds = off;
+      const { leaderboardFor } = await load();
+      await leaderboardFor(viewer(1), 10, NOW);
+      await leaderboardFor(viewer(1), 10, NOW);
+      await leaderboardFor(viewer(1), 10, NOW + 1);
+      expect(queries, `${typeof off} ${off}`).toHaveLength(3);
+    }
+    for (const sixty of ["60", 60]) {
+      queries.length = 0;
+      cacheSeconds = sixty;
+      const { leaderboardFor } = await load();
+      await leaderboardFor(viewer(1), 10, NOW);
+      await leaderboardFor(viewer(1), 10, NOW + 59_000);
+      expect(queries, `${typeof sixty} ${sixty}`).toHaveLength(1);
+      await leaderboardFor(viewer(1), 10, NOW + 60_000);
+      expect(queries, `${typeof sixty} ${sixty}`).toHaveLength(2);
+    }
+  });
 
-    queries.length = 0;
-    cacheSeconds = "300";
-    ({ leaderboardFor } = await load());
-    await leaderboardFor(viewer(1), 10, NOW);
-    await leaderboardFor(viewer(1), 10, NOW + 299_000);
-    expect(queries).toHaveLength(1);
-
-    for (const bad of ["abc", "-5", " ", "NaN"]) {
+  it("falls back to the default for nonsense", async () => {
+    for (const bad of ["abc", "-5", " ", "NaN", -1, Number.NaN]) {
       queries.length = 0;
       cacheSeconds = bad;
-      ({ leaderboardFor } = await load());
+      const { leaderboardFor } = await load();
       await leaderboardFor(viewer(1), 10, NOW);
       await leaderboardFor(viewer(1), 10, NOW + 30_000);
-      expect(queries, bad).toHaveLength(1); // fell back to the one-minute default
+      expect(queries, String(bad)).toHaveLength(1);
     }
   });
 

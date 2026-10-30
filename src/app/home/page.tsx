@@ -17,7 +17,13 @@ const POPUP_ROWS = 10;
 export default async function HomePage() {
   const { user, session } = await requirePage("/home");
   const { status, today, place, now } = await checkIn(user);
-  const board = await leaderboardFor({ id: user.id, username: user.username, streak: status.count }, POPUP_ROWS, now);
+  // The popup is a bonus on the page people land on: if reading it fails, the page still loads without it.
+  const board = await leaderboardFor({ id: user.id, username: user.username, streak: status.count }, POPUP_ROWS, now).catch(
+    (error: unknown) => {
+      console.error("leaderboard unavailable", error);
+      return null;
+    },
+  );
   const next = holyPeriods(place, now, now + 8 * DAY).find((p) => p.end > now);
   const at = (instant: number) =>
     new Date(instant).toLocaleString("en-US", {
@@ -32,7 +38,7 @@ export default async function HomePage() {
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 px-4 py-10">
       {/* The first thing after signing in: shown once per sign-in, over this page. */}
-      <LeaderboardPopup board={board} sessionKey={session.createdAt} />
+      {board && <LeaderboardPopup board={board} sessionKey={session.createdAt} />}
       <h1 className="text-3xl font-bold tracking-tight">Hi {user.firstName} 👋</h1>
 
       <StreakCard
