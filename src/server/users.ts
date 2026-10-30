@@ -218,6 +218,14 @@ export async function saveStreak(userId: number, s: StreakState, event: StreakEv
   );
 }
 
+/**
+ * A same-day check-in only moves the deadline. Writing just that column leaves
+ * the streak_count index alone: D1 bills every index entry it rewrites as a row written.
+ */
+export async function touchStreak(userId: number, lastActivityAt: number) {
+  await run("UPDATE users SET streak_last_activity_at = ? WHERE id = ?", lastActivityAt, userId);
+}
+
 // ---- Authenticator app (TOTP) ----
 
 export async function setPendingTotpSecret(userId: number, secretEnc: string) {

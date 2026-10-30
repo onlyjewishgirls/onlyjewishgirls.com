@@ -1,6 +1,6 @@
 # onlyjewishgirls.com
 
-Sign-up, sign-in with mandatory two-step verification (passkey + authenticator app), forgot password, and a Shabbat- and Yom Tov–aware 🔥 daily streak. The rest of the site is a "coming soon" placeholder for now.
+Sign-up, sign-in with mandatory two-step verification (passkey + authenticator app), forgot password, a Shabbat- and Yom Tov–aware 🔥 daily streak, and a streak leaderboard that pops up on sign-in. The rest of the site is a "coming soon" placeholder for now.
 
 Built with Next.js 16 (App Router), TypeScript and Tailwind CSS 4. It runs on a Cloudflare Worker via [OpenNext](https://opennext.js.org/cloudflare), with data in Cloudflare D1. Passkeys use [SimpleWebAuthn](https://simplewebauthn.dev) and the Jewish calendar comes from [`@hebcal/core`](https://github.com/hebcal/hebcal-es6).
 
@@ -15,8 +15,8 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection |
-| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete, visitor log). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
+| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, the streak leaderboard (ranking, who counts as live, and a calendar sweep proving how long a deadline can reach), form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection |
+| `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, the leaderboard popup and page, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete, visitor log). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
 | `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
 
@@ -88,6 +88,17 @@ The unit tests sweep a full year in New York, Jerusalem, London, Melbourne, Los 
 
 Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `AFTER_HOLY_DAY_HOURS`, `AT_RISK_HOURS`) and the calendar (`STARTS_BEFORE_SUNSET_MINUTES`, `ENDS_AFTER_SUNSET_MINUTES`).
 
+## 🏆 Leaderboard
+
+Right after signing in, a popup over the home page shows the longest streaks going right now, how many days each has, and where you stand. It appears once per sign-in (it remembers the session in the browser's local storage), closes with **Continue**, Escape or a click outside, and the full top 50 is always at [`/leaderboard`](src/app/leaderboard/page.tsx) and behind the 🏆 button in the header. Only signed-in members can see it, and only usernames are shown.
+
+- **Only live streaks are ranked.** A stored count doesn't drop to 0 until the person comes back, so each one is checked against the streak rules: Shabbat and Yom Tov leeway is honored, and a lapsed streak disappears the moment its deadline passes. Suspended accounts are left off. Equal streaks share a rank (1, 2, 2, 4).
+- **Your own row is always current.** The shared list can be a few minutes old; yours comes from the check-in that just happened.
+- **Cheap on D1's free plan.** A `users_streak` index (migration 6) lets the board walk members longest-stored-streak first, a page of 200 at a time, and stop once it has 100 live streaks (never more than 3 pages). Each Worker instance then reuses what it read for 5 minutes (`LEADERBOARD_CACHE_SECONDS`, `0` to turn it off), so a busy home page costs one read per instance per 5 minutes. Anyone who checked in within 30 hours is alive without any calendar work; only members whose last check-in was 30 hours to 7 days ago are checked against sunset times (about 40 µs each). The index is only rewritten when a streak count changes, because a same-day check-in now writes just the deadline (`touchStreak`).
+- **How the read scales.** The recency and suspension tests are applied to each row as the index is walked, so they save calendar work, not row reads: when fewer than 200 members have a recent streak, a refresh reads past every member whose stored count is higher (about 2 row reads each, since a stored count stays until the person next checks in). That's trivial for hundreds of members; at several thousand ever-active members, raise `LEADERBOARD_CACHE_SECONDS` (a dashboard variable, no deploy) or, past that, index recency instead. A refresh that has to calendar-check many lapsed members can use tens of milliseconds of CPU, which is fine on Workers Paid; on the Free plan's 10 ms limit, a request that happened to trigger one could fail with Error 1102, so keep the cache long there. (If the read fails for any other reason, `/home` still loads and just leaves the popup out.)
+- **Skipping old streaks is safe.** The read ignores anyone whose last check-in is more than `STREAK_CERTAINLY_OVER_MS` (7 days) old. The longest deadline that can really happen is about 6.4 days: when the place is unknown, a Yom Tov, one ordinary day and Shabbat chain together. A unit test scans six years in six kinds of place to prove it stays below the cut-off. (The admin panel used to assume 6 days, which could hide such a streak for a few hours.)
+- Pure ranking is in [`src/lib/streak/leaderboard.ts`](src/lib/streak/leaderboard.ts); the database read and cache are in [`src/server/leaderboard.ts`](src/server/leaderboard.ts).
+
 ## Admin panel
 
 `/admin`, linked from the header for admins. Anyone else gets a 404.
@@ -137,14 +148,14 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 
 ```
 src/lib/password/      password rules (shared by browser + server)
-src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers
+src/lib/streak/        streak engine, Shabbat/Yom Tov calendar, date helpers, leaderboard ranking (leaderboard.ts)
 src/lib/validation.ts  registration field rules (shared)
 src/lib/admin/         admin roles/permissions, event labels, display helpers, visitor log cleaning (visits.ts)
 src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email,
                        activity log (events.ts), admin queries and guards (admin.ts), undo (admin-undo.ts),
-                       visitor log (visits.ts)
+                       visitor log (visits.ts), streak leaderboard read + cache (leaderboard.ts)
 src/app/api/           auth, MFA and admin endpoints, and /api/visit (page views from VisitTracker)
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password,
-                       /change-password, /home, /admin (overview, accounts, account, activity, visitors)
+                       /change-password, /home, /leaderboard, /admin (overview, accounts, account, activity, visitors)
 tests/unit, tests/e2e  Vitest and Playwright
 ```

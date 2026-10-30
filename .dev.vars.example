@@ -16,3 +16,6 @@ APP_SECRET=
 
 # Optional. Base URL for links in emails. Defaults to the address the request came in on.
 # PUBLIC_ORIGIN=https://onlyjewishgirls.com
+
+# Optional. Seconds each Worker instance reuses the streak leaderboard before reading it again (default 300; 0 = never).
+# LEADERBOARD_CACHE_SECONDS=300

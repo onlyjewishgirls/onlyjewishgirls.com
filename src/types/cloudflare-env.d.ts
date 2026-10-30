@@ -9,6 +9,8 @@ interface CloudflareEnv {
   EMAIL_PRIMARY?: string;
   /** Sender, e.g. "OnlyJewishGirls <no-reply@onlyjewishgirls.com>". */
   EMAIL_FROM?: string;
+  /** How long the streak leaderboard is reused before it's read again, in seconds, as text or a number (default 300; 0 for tests). */
+  LEADERBOARD_CACHE_SECONDS?: string;
   /** Base URL for links in emails, e.g. "https://onlyjewishgirls.com". Defaults to the request's origin. */
   PUBLIC_ORIGIN?: string;
 }

@@ -31,15 +31,21 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex min-h-full flex-col font-sans">
         <header className="border-b border-border bg-surface/80 backdrop-blur">
-          <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
+          <nav className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-y-2 px-4 py-3">
             <Link href={signedIn ? "/home" : "/"} className="text-lg font-bold tracking-tight">
               Only<span className="text-brand">Jewish</span>Girls
             </Link>
-            <div className="flex items-center gap-2 text-sm">
+            <div className="ml-auto flex items-center gap-1.5 text-sm sm:gap-2">
               {auth ? (
                 <>
+                  {signedIn && (
+                    <Link href="/leaderboard" className="btn-secondary px-3 whitespace-nowrap sm:px-4" aria-label="Leaderboard">
+                      <span aria-hidden>🏆</span>
+                      <span className="hidden sm:inline">Leaderboard</span>
+                    </Link>
+                  )}
                   {admin && (
-                    <Link href="/admin" className="btn-secondary">
+                    <Link href="/admin" className="btn-secondary px-3 whitespace-nowrap sm:px-4">
                       Admin
                     </Link>
                   )}

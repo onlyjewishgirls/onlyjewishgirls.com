@@ -25,6 +25,16 @@ const HOUR_MS = 3_600_000;
 /** No run of Shabbat + Yom Tov is longer than 3 days; this just bounds the loops. */
 const MAX_BLOCK_DAYS = 7;
 
+/**
+ * No streak survives this long without a check-in, so a stored count whose last
+ * check-in is older than this is certainly over (tests/unit/leaderboard.test.ts
+ * scans the calendar to prove it). The longest real deadline is about 6.4 days:
+ * when the place is unknown, Shabbat and Yom Tov are assumed to run from noon on
+ * Erev to 3 AM after, so a Yom Tov, one ordinary day, then Shabbat chain together.
+ * Use it to skip the calendar work for old streaks, never to decide a streak is alive.
+ */
+export const STREAK_CERTAINLY_OVER_MS = 7 * 24 * HOUR_MS;
+
 export interface StreakState {
   count: number;
   longest: number;

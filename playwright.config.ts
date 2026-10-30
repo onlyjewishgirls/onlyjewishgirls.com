@@ -19,7 +19,8 @@ export default defineConfig({
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
     // Builds with OpenNext and serves the real Worker in workerd, with a fresh local D1 database.
-    command: `node scripts/ensure-dev-vars.mjs && rm -rf ${E2E_DATA_DIR} && npx wrangler dev --port ${PORT} --ip 127.0.0.1 --persist-to ${E2E_DATA_DIR}`,
+    // LEADERBOARD_CACHE_SECONDS:0 so tests that change streaks with SQL see the leaderboard change at once.
+    command: `node scripts/ensure-dev-vars.mjs && rm -rf ${E2E_DATA_DIR} && npx wrangler dev --port ${PORT} --ip 127.0.0.1 --persist-to ${E2E_DATA_DIR} --var LEADERBOARD_CACHE_SECONDS:0`,
     url: `http://localhost:${PORT}/login`,
     timeout: 300_000,
     reuseExistingServer: false,

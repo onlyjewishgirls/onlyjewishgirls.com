@@ -28,6 +28,14 @@ export async function addVirtualAuthenticator(page: Page) {
   });
 }
 
+/** The streak leaderboard pops up over the home page once per sign-in. Checks it's there and closes it. */
+export async function dismissLeaderboard(page: Page) {
+  const popup = page.getByTestId("leaderboard-popup");
+  await expect(popup).toBeVisible();
+  await popup.getByRole("button", { name: "Continue" }).click();
+  await expect(popup).toBeHidden();
+}
+
 export async function signOut(page: Page) {
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page).toHaveURL("/");

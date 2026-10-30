@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { addVirtualAuthenticator, screenshot, signIn, signOut, sql, totp } from "./helpers";
+import { addVirtualAuthenticator, dismissLeaderboard, screenshot, signIn, signOut, sql, totp } from "./helpers";
 
 const user = {
   firstName: "Chaya",
@@ -93,6 +93,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await page.getByLabel("I saved these somewhere safe").check();
     await proceed.click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
     await expect(page.getByTestId("streak-count")).toHaveText("1");
     await expect(page.getByTestId("streak-banner")).toContainText("Your streak has started");
     await screenshot(page, "3-home-streak");
@@ -111,6 +112,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page).toHaveURL("/login/verify"); // password alone isn't enough
     await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
     await expect(page.getByTestId("streak-banner")).toContainText("Your streak has started");
   });
 
@@ -122,6 +124,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await page.getByLabel(/6-digit code/).fill(totp(secret, 1));
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
   });
 
   await test.step("sign in with password + recovery code, which then stops working", async () => {
@@ -131,6 +134,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await page.getByLabel("Recovery code").fill(recoveryCodes[0].toLowerCase());
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
 
     await signOut(page);
     await signIn(page, user.username, user.password);
@@ -141,6 +145,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await page.getByRole("button", { name: "Use a passkey" }).click();
     await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
   });
 
   await test.step("checking in on a new day within 30 hours extends the streak", async () => {
@@ -216,6 +221,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page).toHaveURL("/login/verify");
     await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
+    await dismissLeaderboard(page);
   });
 
   expect(consoleErrors).toEqual([]);

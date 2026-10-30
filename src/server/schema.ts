@@ -148,4 +148,9 @@ export const MIGRATIONS: string[][] = [
     // One index only: D1 bills each index as another row written, and this table gets a row per page view.
     `CREATE INDEX IF NOT EXISTS visits_at ON visits(at)`,
   ],
+  [
+    // Streak leaderboard: the longest streaks without reading every user. Only written when the
+    // count changes (about once a day per person; see touchStreak in users.ts).
+    `CREATE INDEX IF NOT EXISTS users_streak ON users(streak_count)`,
+  ],
 ];
