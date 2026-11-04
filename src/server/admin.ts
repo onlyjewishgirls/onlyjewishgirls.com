@@ -6,6 +6,9 @@ import { streakCalendar } from "@/lib/streak/calendar";
 import { bucketByDay, type DailyCount } from "@/lib/admin/days";
 import { getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
 import { all, first, type Param } from "./db";
+import { logEvent } from "./events";
+import { LOGIN_ATTEMPTS_PER_WINDOW } from "./login-rules";
+import { recordStrike } from "./threat";
 import { getPageAuth, type PageAuth } from "./guards";
 import { jsonError } from "./http";
 import { mfaState, nextStep } from "./mfa";
@@ -20,8 +23,6 @@ import { findUserById, listPasskeys, toUser, type Passkey, type User, type UserR
 const HOUR = 60 * 60_000;
 const DAY = 24 * HOUR;
 
-/** Matches the sign-in route: 10 wrong passwords in 15 minutes locks the account for a while. */
-const LOGIN_ATTEMPTS_PER_WINDOW = 10;
 /** Full sessions end after 3 days without activity (see session.ts). */
 const IDLE_MS = 3 * DAY;
 /**
@@ -40,7 +41,10 @@ export async function requireAdminPage(): Promise<PageAuth & { now: number }> {
   const auth = await getPageAuth();
   if (!auth) redirect("/login");
   if (auth.next !== "/home") redirect(auth.next);
-  if (!isAdminRole(auth.user.role)) notFound();
+  if (!isAdminRole(auth.user.role)) {
+    await adminDenied(auth.user, "admin page");
+    notFound();
+  }
   // The request's time, for "5 min ago" and streak deadlines (render code stays pure).
   return { ...auth, now: Date.now() };
 }
@@ -56,10 +60,19 @@ export async function requireAdminApi(): Promise<AdminApiGuard> {
   if (!ctx || ctx.session.stage !== "full") {
     return { ok: false, response: jsonError(401, "Your sign-in expired. Please sign in again.", { next: "/login" }) };
   }
-  if (!isAdminRole(ctx.user.role)) return { ok: false, response: jsonError(404, "Not found.") };
+  if (!isAdminRole(ctx.user.role)) {
+    await adminDenied(ctx.user, "admin API");
+    return { ok: false, response: jsonError(404, "Not found.") };
+  }
   const next = nextStep(ctx.session.stage, await mfaState(ctx.user), ctx.user.mustChangePassword);
   if (next !== "/home") return { ok: false, response: jsonError(403, "Finish signing in first.", { next }) };
   return { ok: true, ctx };
+}
+
+/** §6/§7: a refused admin request is audited, alerted and counted as a strike against the address. */
+export async function adminDenied(user: { id: number; username: string } | null, where: string, ip?: string | null) {
+  await logEvent("security.admin_denied", { user, detail: { where } });
+  await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
 }
 
 // ---- Shared helpers ----

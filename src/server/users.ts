@@ -9,6 +9,8 @@ export interface StreakEvent {
   outcome: Exclude<ActivityOutcome, "same-day">;
   added: number;
   previousCount: number;
+  /** A courtesy restore put the lost streak back (PORTAL-STANDARD §4). */
+  restored?: boolean;
 }
 
 export interface User {
@@ -42,6 +44,11 @@ export interface User {
   lastLoginAt: number | null;
   /** An admin set a temporary password; they must choose their own after signing in. */
   mustChangePassword: boolean;
+  /** Extra console permissions on top of the role (e.g. "streaks.manage"). */
+  permissions: string[];
+  /** Locked by an administrator until this time (Number.MAX_SAFE_INTEGER-ish = until unlocked). */
+  lockedUntil: number | null;
+  lockedReason: string | null;
   createdAt: number;
 }
 
@@ -76,7 +83,20 @@ export interface UserRow {
   admin_note: string | null;
   last_login_at: number | null;
   must_change_password: number;
+  permissions: string | null;
+  locked_until: number | null;
+  locked_reason: string | null;
   created_at: number;
+}
+
+function parsePermissions(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const list = JSON.parse(value);
+    return Array.isArray(list) ? list.filter((p): p is string => typeof p === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 export function toUser(row: UserRow | null): User | null {
@@ -114,6 +134,9 @@ export function toUser(row: UserRow | null): User | null {
     adminNote: row.admin_note,
     lastLoginAt: row.last_login_at,
     mustChangePassword: row.must_change_password === 1,
+    permissions: parsePermissions(row.permissions),
+    lockedUntil: row.locked_until ?? null,
+    lockedReason: row.locked_reason ?? null,
     createdAt: row.created_at,
   };
 }
@@ -534,4 +557,27 @@ export async function changePassword(userId: number, passwordHash: string, keepS
     ["DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL", userId],
     ["DELETE FROM sessions WHERE user_id = ? AND id_hash != ?", userId, keepSessionIdHash],
   ]);
+}
+
+export async function setPermissions(userId: number, permissions: string[]) {
+  await run("UPDATE users SET permissions = ? WHERE id = ?", permissions.length ? JSON.stringify(permissions) : null, userId);
+}
+
+/** An administrator's lock. `until` null unlocks. Locking also signs the account out everywhere. */
+export async function setAdminLock(userId: number, until: number | null, reason: string | null) {
+  const statements: Statement[] = [
+    ["UPDATE users SET locked_until = ?, locked_reason = ? WHERE id = ?", until, until === null ? null : reason, userId],
+  ];
+  if (until !== null) statements.push(["DELETE FROM sessions WHERE user_id = ?", userId]);
+  await batch(statements);
+}
+
+export async function setMustChangePassword(userId: number, on: boolean) {
+  await run("UPDATE users SET must_change_password = ? WHERE id = ?", on ? 1 : 0, userId);
+}
+
+/** Looks a passkey up by credential ID alone (usernameless passkey sign-in). */
+export async function findPasskeyById(id: string): Promise<Passkey | null> {
+  const row = await first<PasskeyRow>("SELECT * FROM passkeys WHERE id = ?", id);
+  return row ? toPasskey(row) : null;
 }

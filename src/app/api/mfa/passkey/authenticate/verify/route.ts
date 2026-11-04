@@ -1,22 +1,17 @@
 import type { AuthenticationResponseJSON } from "@simplewebauthn/server";
-import { api, jsonError, readJson } from "@/server/http";
+import { api, fail, readJson } from "@/server/http";
 import { completeSecondFactor, requireSecondFactorStep, secondFactorFailed } from "@/server/mfa-routes";
 import { takeChallenge } from "@/server/session";
-import { verifyAuthentication } from "@/server/webauthn";
+import { checkAuthentication } from "@/server/webauthn";
 
 export const POST = api(async (req) => {
   const guard = await requireSecondFactorStep();
   if (!guard.ok) return guard.response;
   const challenge = await takeChallenge(guard.ctx.session);
-  if (!challenge) return jsonError(400, "That took too long. Please try again.");
+  if (!challenge) return fail(400, "passkey_failed", "The passkey request expired (5 minutes). Try again.");
 
   const body = await readJson(req);
-  let verified = false;
-  try {
-    verified = await verifyAuthentication(req, guard.ctx.user, body as unknown as AuthenticationResponseJSON, challenge);
-  } catch (error) {
-    console.warn("Passkey sign-in rejected:", (error as Error).message);
-  }
-  if (!verified) return secondFactorFailed(guard.ctx, "passkey", "That passkey didn't work. Try again or use another method.");
+  const check = await checkAuthentication(req, guard.ctx.user, body as unknown as AuthenticationResponseJSON, challenge);
+  if (!check.ok) return secondFactorFailed(guard.ctx, "passkey", check.reason, { code: "passkey_failed", field: null });
   return completeSecondFactor(guard.ctx, "passkey");
 });

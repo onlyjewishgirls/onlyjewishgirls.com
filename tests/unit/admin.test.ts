@@ -23,7 +23,13 @@ const SELF_LOCKOUT: AdminAction[] = [
   "reset_two_step",
   "set_role",
   "delete",
+  "lock",
+  "set_permissions",
+  "force_change",
 ];
+/** PORTAL-STANDARD §4: owner-or-streaks.manage, never an admin on themselves. */
+const STREAK: AdminAction[] = ["set_streak", "grant_restores"];
+const OWNER_ONLY: AdminAction[] = ["set_role", "set_permissions"];
 
 describe("admin permissions", () => {
   it("members can't do anything", () => {
@@ -32,7 +38,9 @@ describe("admin permissions", () => {
 
   it("nobody can act on the owner except the owner on their own account", () => {
     for (const actor of [admin, admin2]) expect(allowedActions(actor, owner)).toEqual([]);
+    // The owner may set their own streak (§4).
     expect(allowedActions(owner, owner)).toEqual(ADMIN_ACTIONS.filter((a) => !SELF_LOCKOUT.includes(a)));
+    expect(can(owner, "set_streak", owner)).toBe(true);
   });
 
   it("nobody can lock themselves out", () => {
@@ -44,8 +52,21 @@ describe("admin permissions", () => {
   });
 
   it("admins manage members, but not other admins, and can't change roles", () => {
-    expect(allowedActions(admin, member)).toEqual(ADMIN_ACTIONS.filter((a) => a !== "set_role"));
+    expect(allowedActions(admin, member)).toEqual(ADMIN_ACTIONS.filter((a) => !OWNER_ONLY.includes(a) && !STREAK.includes(a)));
     expect(allowedActions(admin, admin2)).toEqual([]);
+  });
+
+  it("streaks: admins need streaks.manage and never on themselves; the owner always (§4)", () => {
+    const streakAdmin = { ...admin, permissions: ["streaks.manage"] };
+    for (const action of STREAK) {
+      expect(can(admin, action, member)).toBe(false);
+      expect(can(streakAdmin, action, member)).toBe(true);
+      expect(can(streakAdmin, action, streakAdmin)).toBe(false);
+      expect(can(streakAdmin, action, admin2)).toBe(false);
+      expect(can(owner, action, owner)).toBe(true);
+      expect(can(owner, action, admin)).toBe(true);
+      expect(can({ ...member, permissions: ["streaks.manage"] }, action, member2)).toBe(false);
+    }
   });
 
   it("the owner manages admins and members, including roles", () => {

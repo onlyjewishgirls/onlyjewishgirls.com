@@ -11,7 +11,7 @@ export interface StreakCardProps {
   leeway: { names: string[] }[];
   graceHours: number;
   /** The streak change from today's first check-in. */
-  today: { outcome: Exclude<ActivityOutcome, "same-day">; added: number; previousCount: number } | null;
+  today: { outcome: Exclude<ActivityOutcome, "same-day"> | "restored"; added: number; previousCount: number } | null;
   serverNow: number;
   atRiskMs: number;
 }
@@ -31,6 +31,8 @@ function banner(today: StreakCardProps["today"]) {
   switch (today?.outcome) {
     case "started":
       return "Your streak has started! Check in again within 30 hours to keep it going.";
+    case "restored":
+      return `Your ${today.previousCount}-day streak is restored. Welcome back!`;
     case "restarted":
       return `Your ${today.previousCount}-day streak ended — a new one starts today. You've got this.`;
     case "continued":

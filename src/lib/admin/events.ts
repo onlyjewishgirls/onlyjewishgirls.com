@@ -7,6 +7,10 @@ export const EVENT_LABELS = {
   "signin.unknown": "Tried to sign in to an account that doesn't exist",
   "signin.rate_limited": "Locked out after too many sign-in attempts",
   "signin.suspended": "Blocked: account is suspended",
+  "signin.locked": "Blocked: account is locked by an administrator",
+  "signin.ip_blocked": "Blocked: IP address is on the deny list",
+  "signin.ip_not_allowed": "Blocked: IP address is not on the allowlist",
+  "signin.new_device": "Signed in from a new device, IP or country",
   "signin.complete": "Signed in",
   "signin.mfa_failed": "Failed two-step verification",
   "signin.mfa_locked": "Locked out after too many two-step failures",
@@ -20,6 +24,8 @@ export const EVENT_LABELS = {
   "streak.started": "Started a streak",
   "streak.continued": "Extended their streak",
   "streak.restarted": "Lost their streak and started again",
+  "streak.restored": "Restored their lost streak (courtesy restore)",
+  "streak.restore_refused": "Tried to restore their streak and was refused",
   "admin.verified": "Re-verified for admin actions",
   "admin.suspend": "Suspended the account",
   "admin.unsuspend": "Lifted the suspension",
@@ -40,6 +46,26 @@ export const EVENT_LABELS = {
   "admin.set_role": "Changed the role",
   "admin.delete": "Deleted the account",
   "admin.export": "Exported all accounts",
+  "admin.lock": "Locked the account",
+  "admin.unlock": "Unlocked the account",
+  "admin.set_permissions": "Changed extra permissions",
+  "admin.force_change": "Changed 'must choose a new password'",
+  "admin.grant_restores": "Granted extra streak restores",
+  "admin.send_email": "Emailed the person",
+  "admin.settings": "Changed settings",
+  "admin.alert_test": "Sent a test security alert",
+  "admin.ip_allow_add": "Added an allowlist entry",
+  "admin.ip_allow_update": "Edited an allowlist entry",
+  "admin.ip_allow_remove": "Removed an allowlist entry",
+  "admin.ip_deny_add": "Blocked an IP address",
+  "admin.ip_deny_update": "Edited a deny-list entry",
+  "admin.ip_unblock": "Unblocked an IP address",
+  "security.admin_denied": "Refused: admin area without permission",
+  "security.auto_blocked": "IP auto-blacklisted",
+  "security.auto_block_skipped": "Would have auto-blacklisted (local address)",
+  "security.hostile": "Visitor reached the hostile threat band",
+  "security.decoy": "Requested a scanner/decoy path",
+  "security.injection": "Sent an injection payload",
 } as const;
 
 export type EventType = keyof typeof EVENT_LABELS;
@@ -56,6 +82,7 @@ export const EVENT_GROUPS = {
   admin: { label: "Admin actions", prefix: "admin." },
   account: { label: "New accounts", prefix: "account." },
   streak: { label: "Streaks", prefix: "streak." },
+  threats: { label: "Threats & blocks", prefix: "security." },
 } as const;
 export type EventGroup = keyof typeof EVENT_GROUPS;
 
@@ -73,6 +100,11 @@ export function isWarningEvent(type: string): boolean {
     type === "signin.mfa_failed" ||
     type === "signin.mfa_locked" ||
     type === "admin.suspend" ||
-    type === "admin.delete"
+    type === "admin.delete" ||
+    type === "admin.lock" ||
+    type.startsWith("security.") ||
+    type === "signin.ip_blocked" ||
+    type === "signin.ip_not_allowed" ||
+    type === "signin.locked"
   );
 }

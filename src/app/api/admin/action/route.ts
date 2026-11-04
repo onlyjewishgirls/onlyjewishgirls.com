@@ -1,7 +1,7 @@
 import parseMax from "libphonenumber-js/max";
 import { NextResponse } from "next/server";
 import { ASSIGNABLE_ROLES, ROLE_LABELS, can, isAdminAction, isRole, type AdminAction } from "@/lib/admin/permissions";
-import { localDate } from "@/lib/streak/dates";
+import { MAX_SET_STREAK } from "@/lib/streak/restore";
 import { normalizeEmail, normalizeName, validateEmail, validateName, validatePhone, validateUsername } from "@/lib/validation";
 import { recentlyVerified, requireAdminApi } from "@/server/admin";
 import { profileOf, type Undo } from "@/server/admin-undo";
@@ -12,6 +12,7 @@ import { mfaFailureKey } from "@/server/mfa-routes";
 import { hashPassword } from "@/server/passwords";
 import { sendPasswordResetEmail } from "@/server/password-reset";
 import { rateLimit, resetRateLimit } from "@/server/rate-limit";
+import { adminSetStreak } from "@/server/streak";
 import { generateTemporaryPassword } from "@/server/temp-password";
 import {
   clearRecoveryCodes,
@@ -22,7 +23,6 @@ import {
   findUserById,
   removePasskey,
   resetTwoStep,
-  saveStreak,
   setAdminNote,
   setRole,
   setTemporaryPassword,
@@ -34,7 +34,7 @@ import {
 
 const MAX_NOTE = 2000;
 const MAX_REASON = 500;
-const MAX_STREAK = 100_000;
+const MAX_STREAK = MAX_SET_STREAK;
 
 type Fields = Partial<Record<keyof ProfileChanges, string>>;
 
@@ -232,26 +232,16 @@ export const POST = api(async (req) => {
       if (!Number.isInteger(count) || count < 0 || count > MAX_STREAK) {
         return jsonError(400, `Enter a whole number from 0 to ${MAX_STREAK.toLocaleString()}.`);
       }
-      const state =
-        count === 0
-          ? { count: 0, longest: target.streak.longest, lastActivityAt: null, lastCountedDate: null, startedAt: null }
-          : {
-              count,
-              longest: Math.max(target.streak.longest, count),
-              // The new streak counts as checked in today, so their next deadline starts now.
-              lastActivityAt: now,
-              lastCountedDate: localDate(now, target.timeZone),
-              startedAt: target.streak.startedAt ?? now,
-            };
-      await saveStreak(target.id, state, null);
+      // setPlan (PORTAL-STANDARD §4): today counts and the window restarts now. Doesn't use their restores.
+      const result = (await adminSetStreak(actor, target, count, now))!;
       return done(
         count === 0 ? "Streak reset to 0." : `Streak set to ${count}. Their 30-hour window starts now.`,
-        { from: target.streak.count, to: count },
+        { from: result.from, to: count },
         {
           kind: "set_streak",
           state: target.streak,
           event: target.streakLastEvent,
-          after: { count: state.count, lastActivityAt: state.lastActivityAt },
+          after: { count: result.state.count, lastActivityAt: result.state.lastActivityAt },
         },
       );
     }
@@ -288,5 +278,7 @@ export const POST = api(async (req) => {
       await deleteUser(target.id);
       return NextResponse.json({ ok: true, message: `${target.username}'s account was deleted.`, next: "/admin/users" });
     }
+    default:
+      return jsonError(400, "That change is made from the admin console (/admin).");
   }
 });

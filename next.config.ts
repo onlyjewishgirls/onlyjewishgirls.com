@@ -2,6 +2,22 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Scanner/decoy paths (PORTAL-STANDARD §7) go to a handler that blocks the address.
+  // Keep in step with DECOY_PATH_PATTERNS in src/lib/security.ts.
+  async rewrites() {
+    return {
+      beforeFiles: [
+        {
+          source:
+            "/:p((?:\\.env|\\.git|\\.svn|\\.aws|\\.DS_Store|wp-admin|wp-login|wp-content|wp-includes|wp-config|xmlrpc\\.php|phpmyadmin|pma|adminer|cgi-bin|server-status|vendor/phpunit|administrator|actuator).*)",
+          destination: "/api/decoy?p=:p",
+        },
+        { source: "/:p(.*\\.(?:php|asp|aspx|jsp|cgi))", destination: "/api/decoy?p=:p" },
+      ],
+      afterFiles: [],
+      fallback: [],
+    };
+  },
   async headers() {
     return [
       {

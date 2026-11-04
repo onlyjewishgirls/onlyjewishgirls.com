@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/admin", label: "Overview", match: (p: string) => p === "/admin" },
+  { href: "/admin/overview", label: "Overview", match: (p: string) => p === "/admin/overview" },
   { href: "/admin/users", label: "Accounts", match: (p: string) => p.startsWith("/admin/users") },
   { href: "/admin/activity", label: "Activity", match: (p: string) => p.startsWith("/admin/activity") },
   { href: "/admin/visitors", label: "Visitors", match: (p: string) => p.startsWith("/admin/visitors") },
@@ -14,7 +14,13 @@ export function AdminNav() {
   const pathname = usePathname();
   return (
     <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-      <p className="text-xs font-semibold tracking-widest text-muted uppercase">Admin panel</p>
+      <p className="text-xs font-semibold tracking-widest text-muted uppercase">
+        Classic admin panel ·{" "}
+        {/* The console is a plain page (a route handler), so a full navigation, not <Link>. */}
+        <a href="/admin" className="link normal-case tracking-normal">
+          Open the console
+        </a>
+      </p>
       <nav aria-label="Admin sections" className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-1 text-sm">
         {TABS.map((tab) => {
           const active = tab.match(pathname);

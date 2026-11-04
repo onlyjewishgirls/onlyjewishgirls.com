@@ -5,6 +5,9 @@ interface __BaseEnv_CloudflareEnv {
 	DB: D1Database;
 	ASSETS: Fetcher;
 	APP_SECRET: string;
+	EMAIL_PRIMARY: "resend";
+	ALERTS_EMAIL_FROM: "securityalerts@onlyjewishgirls.com";
+	ALERTS_EMAIL_TO: "soc@onlyjewishgirls.com";
 }
 declare namespace Cloudflare {
 	interface GlobalProps {
@@ -17,7 +20,7 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_SECRET">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "APP_SECRET" | "EMAIL_PRIMARY" | "ALERTS_EMAIL_FROM" | "ALERTS_EMAIL_TO">> {}
 }
 
 // Begin runtime types

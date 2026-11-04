@@ -1,9 +1,10 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { randomToken, sha256 } from "./crypto";
 import { all, first, run } from "./db";
 import { isLocalHost, requestHost } from "./env";
 import { requestInfo } from "./events";
+import { denyingRule } from "./ip-rules";
 import { findUserById, type User } from "./users";
 
 /**
@@ -150,8 +151,14 @@ export async function getAuth(now = Date.now()): Promise<AuthContext | null> {
   }
   const user = await findUserById(session.userId);
   if (!user) return null;
-  if (user.suspendedAt !== null) {
+  if (user.suspendedAt !== null || (user.lockedUntil !== null && user.lockedUntil > now)) {
     await run("DELETE FROM sessions WHERE user_id = ?", user.id);
+    return null;
+  }
+  // A deny-listed address (PORTAL-STANDARD §7) is signed out on its next request.
+  const ip = (await headers()).get("cf-connecting-ip");
+  if (ip && (await denyingRule(ip, now))) {
+    await run("DELETE FROM sessions WHERE id_hash = ?", session.idHash);
     return null;
   }
   if (now - session.lastSeenAt > MINUTE) {

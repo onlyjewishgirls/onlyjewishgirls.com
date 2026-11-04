@@ -191,7 +191,7 @@ export function Modal({
   );
 }
 
-function VerifyDialog({
+export function VerifyDialog({
   hasPasskey,
   hasTotp,
   onDone,

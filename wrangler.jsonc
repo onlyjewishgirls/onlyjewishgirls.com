@@ -38,8 +38,12 @@
   // "resend" or "plunk": which email provider goes first (src/server/mailer.ts). The other is
   // the backup when it fails; with only one key (EMAIL_API_KEY / PLUNK_API_KEY secrets) set,
   // that one is used alone.
+  // ALERTS_EMAIL_FROM / ALERTS_EMAIL_TO: where security alert emails come from and go to
+  // (PORTAL-STANDARD §6; src/server/alerts.ts). The sender must be on a domain verified in Resend/Plunk.
   "vars": {
-    "EMAIL_PRIMARY": "resend"
+    "EMAIL_PRIMARY": "resend",
+    "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",
+    "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com"
   },
   "observability": {
     "enabled": true

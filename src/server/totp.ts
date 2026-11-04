@@ -88,3 +88,22 @@ export function totpUri(secretBase32: string, accountName: string, issuer: strin
   });
   return `otpauth://totp/${label}?${params}`;
 }
+
+/**
+ * Why a code that verifyTotp refused was refused (PORTAL-STANDARD §2: exact errors).
+ * Looks back up to 10 minutes to tell an expired code from a wrong one.
+ */
+export function explainTotpFailure(secretBase32: string, code: string, nowMs: number, lastUsedStep: number | null): string {
+  const clean = code.replace(/\s/g, "");
+  if (!/^\d{6}$/.test(clean)) return "Enter the 6-digit code from your authenticator app.";
+  const secret = base32Decode(secretBase32);
+  const current = totpStep(nowMs);
+  for (let step = current + DRIFT_STEPS; step >= current - 20; step--) {
+    if (hotp(secret, step) !== clean) continue;
+    if (lastUsedStep !== null && step <= lastUsedStep && step >= current - DRIFT_STEPS) {
+      return "That code was already used. Wait for the next one (codes change every 30 seconds).";
+    }
+    return "That code has expired; use the code your app shows now.";
+  }
+  return "That code is incorrect.";
+}

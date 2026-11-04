@@ -1,16 +1,30 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FormError } from "@/components/AuthCard";
 import { signInWithPasskey } from "@/components/passkeys";
 import { postJson, type ApiResult } from "@/lib/api-client";
+import { defaultMfaMethod } from "@/lib/mfa-order";
 
 type Method = "passkey" | "totp" | "recovery";
 
-export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp: boolean; recovery: boolean }) {
+
+export function VerifyMfa({
+  passkey,
+  totp,
+  recovery,
+  preferred = "passkey",
+}: {
+  passkey: boolean;
+  totp: boolean;
+  recovery: boolean;
+  preferred?: "passkey" | "totp";
+}) {
   const router = useRouter();
-  const [method, setMethod] = useState<Method>(passkey ? "passkey" : totp ? "totp" : "recovery");
+  const [method, setMethod] = useState<Method>(
+    (defaultMfaMethod({ passkey, totp, recovery }, preferred) as Method | null) ?? "recovery",
+  );
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -27,6 +41,15 @@ export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp:
     setBusy(false);
     setError(res.data.error ?? "That didn't work. Please try again.");
   }
+
+  // Default = passkey: the prompt starts by itself (once) when the account has one.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current || method !== "passkey" || !passkey) return;
+    autoStarted.current = true;
+    finish(signInWithPasskey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const submitCode = (url: string) => (e: FormEvent) => {
     e.preventDefault();
@@ -101,24 +124,46 @@ export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp:
       <FormError message={error} />
 
       <div className="border-t border-border pt-4 text-sm">
-        <p className="mb-2 text-muted">Other ways to verify:</p>
-        <div className="flex flex-col items-start gap-1.5">
-          {passkey && method !== "passkey" && (
-            <button type="button" className="link" onClick={() => switchTo("passkey")}>
-              Use a passkey
-            </button>
+        <p className="mb-2 text-muted">Use another method:</p>
+        <ul className="flex flex-col items-start gap-1.5" data-testid="mfa-methods">
+          <li data-method="passkey">
+            {passkey ? (
+              method !== "passkey" ? (
+                <button type="button" className="link" onClick={() => switchTo("passkey")}>
+                  Passkey
+                </button>
+              ) : (
+                <span className="text-muted">Passkey (current)</span>
+              )
+            ) : (
+              <span className="text-muted">
+                Passkey — set one up: you&apos;ll be asked to add one right after you verify with another method.
+              </span>
+            )}
+          </li>
+          {totp && (
+            <li data-method="totp">
+              {method !== "totp" ? (
+                <button type="button" className="link" onClick={() => switchTo("totp")}>
+                  Authenticator app
+                </button>
+              ) : (
+                <span className="text-muted">Authenticator app (current)</span>
+              )}
+            </li>
           )}
-          {totp && method !== "totp" && (
-            <button type="button" className="link" onClick={() => switchTo("totp")}>
-              Use my authenticator app
-            </button>
+          {recovery && (
+            <li data-method="recovery">
+              {method !== "recovery" ? (
+                <button type="button" className="link" onClick={() => switchTo("recovery")}>
+                  Recovery code
+                </button>
+              ) : (
+                <span className="text-muted">Recovery code (current)</span>
+              )}
+            </li>
           )}
-          {recovery && method !== "recovery" && (
-            <button type="button" className="link" onClick={() => switchTo("recovery")}>
-              Use a recovery code
-            </button>
-          )}
-        </div>
+        </ul>
       </div>
     </div>
   );

@@ -40,6 +40,12 @@ export const ADMIN_ACTIONS = [
   "set_note",
   "set_role",
   "delete",
+  "lock",
+  "unlock",
+  "set_permissions",
+  "force_change",
+  "grant_restores",
+  "send_email",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -58,16 +64,45 @@ const NOT_ON_SELF = new Set<AdminAction>([
   "reset_two_step",
   "set_role",
   "delete",
+  "lock",
+  "set_permissions",
+  "force_change",
 ]);
+
+/**
+ * Extra permissions the owner can give an account on top of its role.
+ * `streaks.manage` (PORTAL-STANDARD §4): an admin may set other people's streaks
+ * and grant extra restores. The owner always may, on anyone including themselves.
+ */
+export const EXTRA_PERMISSIONS = {
+  "streaks.manage": "Set other people's streaks and grant extra courtesy restores",
+} as const;
+export type ExtraPermission = keyof typeof EXTRA_PERMISSIONS;
+export const isExtraPermission = (v: unknown): v is ExtraPermission =>
+  typeof v === "string" && Object.hasOwn(EXTRA_PERMISSIONS, v);
+
+const STREAK_ACTIONS = new Set<AdminAction>(["set_streak", "grant_restores"]);
 
 interface Account {
   id: number;
   role: Role;
+  permissions?: readonly string[];
+}
+
+export function hasPermission(actor: Account, permission: ExtraPermission): boolean {
+  return actor.role === "owner" || (isAdminRole(actor.role) && (actor.permissions ?? []).includes(permission));
 }
 
 /** Whether `actor` may perform `action` on `target`. */
 export function can(actor: Account, action: AdminAction, target: Account): boolean {
   if (!isAdminRole(actor.role)) return false;
+  if (STREAK_ACTIONS.has(action)) {
+    // §4: the owner can set anyone's streak, including their own. Admins need streaks.manage
+    // and can never set their own.
+    if (actor.role === "owner") return true;
+    if (actor.id === target.id || !hasPermission(actor, "streaks.manage")) return false;
+  }
+  if (action === "set_permissions") return actor.role === "owner" && actor.id !== target.id && target.role !== "owner";
   if (actor.id === target.id) return !NOT_ON_SELF.has(action);
   if (target.role === "owner") return false;
   if (action === "set_role") return actor.role === "owner";

@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     ".open-next/**",
     ".wrangler/**",
     "cloudflare-env.d.ts",
+    // The shared Console kit, vendored as-is from console-kit/ (upstream owns its style).
+    "public/console/**",
   ]),
 ]);
 

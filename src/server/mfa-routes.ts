@@ -1,10 +1,12 @@
 import "server-only";
 import { NextResponse } from "next/server";
-import { jsonError, tooManyRequests } from "./http";
+import { fail, jsonError } from "./http";
+import { untilText } from "./login-rules";
+import { recordStrike } from "./threat";
 import { canEnroll, mfaState, nextStep, type MfaState } from "./mfa";
 import { isRateLimited, rateLimit } from "./rate-limit";
 import { logEvent } from "./events";
-import { getAuth, recentlyVerified, recordMfaFailure, startSession, type AuthContext } from "./session";
+import { getAuth, MAX_MFA_FAILURES, recentlyVerified, recordMfaFailure, startSession, type AuthContext } from "./session";
 import { findUserById, setLastLogin } from "./users";
 
 /** How a sign-in's second step was completed. */
@@ -45,9 +47,20 @@ export async function requireSecondFactorStep(): Promise<Guarded> {
   if (ctx.session.stage !== "password" || mfa.factors === 0) {
     return { ok: false, response: jsonError(400, "Nothing to verify.", { next: nextStep(ctx.session.stage, mfa) }) };
   }
-  const limit = await isRateLimited(mfaFailureKey(ctx.user.id), MFA_FAILURES_PER_HOUR);
-  if (limit.limited) return { ok: false, response: tooManyRequests(limit.retryAfterSeconds) };
+  const now = Date.now();
+  const limit = await isRateLimited(mfaFailureKey(ctx.user.id), MFA_FAILURES_PER_HOUR, now);
+  if (limit.limited) return { ok: false, response: mfaLockedResponse(ctx, limit.retryAfterSeconds, now) };
   return { ok: true, ctx, mfa };
+}
+
+function mfaLockedResponse(ctx: AuthContext, retryAfterSeconds: number, now: number) {
+  return fail(
+    429,
+    "account_locked",
+    `Two-step verification for ${ctx.user.username} is locked until ${untilText(now + retryAfterSeconds * 1000, ctx.user.timeZone, now)} after ${MFA_FAILURES_PER_HOUR} wrong codes in an hour.`,
+    null,
+    { retryAfterSeconds },
+  );
 }
 
 async function nextAfterFullSignIn(userId: number) {
@@ -70,12 +83,28 @@ export async function afterEnrollment(ctx: AuthContext, extra: Record<string, un
   return NextResponse.json({ next: await nextAfterFullSignIn(ctx.user.id), ...extra });
 }
 
-export async function secondFactorFailed(ctx: AuthContext, method: SecondFactor, message: string) {
+/**
+ * A wrong second factor. `code`/`message` are the exact reason (§2: mfa_wrong_code / passkey_failed).
+ * Counts toward the session's 5 tries, the account's hourly limit and the IP's strikes (§7).
+ */
+export async function secondFactorFailed(
+  ctx: AuthContext,
+  method: SecondFactor,
+  message: string,
+  { code = "mfa_wrong_code", field = "code" }: { code?: "mfa_wrong_code" | "passkey_failed"; field?: string | null } = {},
+) {
   await rateLimit(mfaFailureKey(ctx.user.id), MFA_FAILURES_PER_HOUR, 60 * 60_000);
   await logEvent("signin.mfa_failed", { user: ctx.user, detail: { method } });
+  const blocked = await recordStrike("failed_mfa", { ip: ctx.session.ip, subject: `u${ctx.user.id}` });
+  if (blocked) {
+    return fail(403, "ip_blocked", `${message} Your IP ${ctx.session.ip} is now blocked (reason: ${blocked.reason}).`, null, { next: "/login" });
+  }
   if (await recordMfaFailure(ctx.session)) {
     await logEvent("signin.mfa_locked", { user: ctx.user, detail: { method } });
-    return jsonError(401, "Too many incorrect attempts. Please sign in again.", { next: "/login" });
+    return fail(401, code, `${message} That was ${MAX_MFA_FAILURES} wrong tries on this sign-in, so it has ended. Sign in again.`, null, {
+      next: "/login",
+    });
   }
-  return jsonError(400, message);
+  const left = MAX_MFA_FAILURES - ctx.session.failedMfaAttempts - 1;
+  return fail(400, code, `${message} ${left} ${left === 1 ? "try" : "tries"} left on this sign-in.`, field);
 }
