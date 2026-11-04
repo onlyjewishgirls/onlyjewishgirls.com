@@ -1,6 +1,6 @@
 "use client";
 
-import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration, WebAuthnAbortService } from "@simplewebauthn/browser";
 import { postJson, type ApiResult } from "@/lib/api-client";
 
 type Next = ApiResult<Record<string, unknown>>;
@@ -44,7 +44,7 @@ export async function signInWithPasskey(): Promise<Next> {
  * the browser offers passkeys in the username field's autofill and the promise waits until one is picked.
  */
 export async function passkeyLogin({ autofill = false } = {}): Promise<Next> {
-  const options = await postJson("/api/auth/passkey/options");
+  const options = await postJson("/api/auth/passkey/options", { autofill });
   if (!options.ok) return options;
   try {
     const response = await startAuthentication({ optionsJSON: options.data as never, useBrowserAutofill: autofill });
@@ -57,4 +57,13 @@ export async function passkeyLogin({ autofill = false } = {}): Promise<Next> {
 export async function browserSupportsAutofill(): Promise<boolean> {
   const { browserSupportsWebAuthnAutofill } = await import("@simplewebauthn/browser");
   return browserSupportsWebAuthnAutofill().catch(() => false);
+}
+
+/** Abandons a passkey prompt that is still open (e.g. the person chose another method). */
+export function cancelPasskeyPrompt() {
+  try {
+    WebAuthnAbortService.cancelCeremony();
+  } catch {
+    // nothing in flight
+  }
 }

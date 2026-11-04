@@ -12,6 +12,7 @@ export const ROUTES: Route[] = [
 
   { method: "GET", pattern: "people", handler: people.listPeople },
   { method: "POST", pattern: "people", handler: people.createPerson, write: true },
+  { method: "GET", pattern: "people/schema", handler: people.peopleSchema },
   { method: "GET", pattern: "people/:id", handler: people.getPerson },
   { method: "PATCH", pattern: "people/:id", handler: people.patchPerson, write: true },
   { method: "DELETE", pattern: "people/:id", handler: people.deletePerson, write: true },
@@ -53,6 +54,10 @@ export const ROUTES: Route[] = [
   { method: "DELETE", pattern: "sessions/:id", handler: sections.deleteSessionRoute, write: true },
 
   { method: "GET", pattern: "audit", handler: records.listAudit },
+  // verify/export before :id (API.md §14); both features are off here.
+  { method: "GET", pattern: "audit/verify", handler: records.auditUnavailable },
+  { method: "GET", pattern: "audit/export", handler: records.auditUnavailable },
+  { method: "GET", pattern: "audit/:id", handler: records.getAudit },
   { method: "POST", pattern: "audit/:id/revert", handler: records.revertAudit, write: true },
   { method: "GET", pattern: "alerts", handler: records.listAlertsRoute },
 ];

@@ -204,6 +204,11 @@ describe("console API: settings, audit, alerts", () => {
     const alerts = (await c("GET", "alerts")).data as Record<string, any>;
     expect(alerts.routing).toMatchObject({ from: "securityalerts@onlyjewishgirls.com", to: "soc@onlyjewishgirls.com" });
     expect(alerts.items[0]).toMatchObject({ subject: "[SECURITY] OnlyJewishGirls — Suspended the account", audit_id: entry.id });
+    // Deep link from the alert email, and the person filter (actor or target).
+    expect((await c("GET", `audit/${entry.id}`)).data).toMatchObject({ ok: true, entry: { id: entry.id, alert_id: entry.alert_id } });
+    const byPerson = (await c("GET", `audit?person=${member.id}`)).data as Record<string, any>;
+    expect(byPerson.items.every((i: any) => i.target?.id === String(member.id) || i.actor?.id === String(member.id))).toBe(true);
+    expect((await c("GET", "audit/verify")).data.code).toBe("not_found");
     // Revert
     expect((await c("POST", `audit/${entry.id}/revert`, {})).data.ok).toBe(true);
   });
@@ -215,6 +220,12 @@ describe("console API: settings, audit, alerts", () => {
       expect(r.data.ok, p).toBe(true);
     }
     expect(((await c("GET", "sessions")).data.items as unknown[]).length).toBe(1);
+    expect((await c("GET", "bootstrap")).data.counts).toEqual({ deny: 0 });
+    h.d1.exec("INSERT INTO ip_strikes (ip, kind, subject, at) VALUES ('198.51.100.3', 'decoy', '/.env', ?)", Date.now());
+    h.d1.exec("INSERT INTO ip_rules (kind, ip, source, reason, created_at) VALUES ('deny', '198.51.100.3', 'auto', 'decoy', ?)", Date.now());
+    const v = (await c("GET", "security/visitors?band=hostile")).data as Record<string, any>;
+    expect(v.items[0]).toMatchObject({ ip: "198.51.100.3", band: "hostile", denied: true, deny_id: expect.any(String), probe_hits: 1 });
+    expect((await c("GET", "people/schema")).data.create_fields).toBeTruthy();
     expect((await c("GET", "nope")).data).toMatchObject({ code: "not_found" });
   });
 });

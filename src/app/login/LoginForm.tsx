@@ -44,8 +44,9 @@ export function LoginForm() {
     browserSupportsAutofill().then((ok) => {
       if (!ok) return;
       passkeyLogin({ autofill: true }).then((res) => {
-        // A cancelled autofill (the user typed a password instead) isn't an error worth showing.
-        if (!res.ok && res.status === 0 && /cancelled/i.test(String(res.data.error))) return;
+        // Autofill runs in the background: a prompt that was cancelled or couldn't start (the person
+        // typed a password instead) isn't shown. A passkey that was picked and refused is.
+        if (!res.ok && res.status === 0) return;
         handle(res);
       });
     });

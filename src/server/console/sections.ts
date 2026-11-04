@@ -73,8 +73,14 @@ export async function bootstrap(ctx: ConsoleCtx) {
   const banners: string[] = [];
   if (!settings.auto_block_enabled) banners.push("Auto-blacklisting is OFF: suspicious IPs are reported but not blocked.");
   if (!emailConfigured()) banners.push("Email isn't configured, so security alerts are recorded but not delivered.");
+  const pending = await first<{ deny: number }>(
+    "SELECT COUNT(*) AS deny FROM ip_rules WHERE kind = 'deny' AND source = 'auto' AND revoked_at IS NULL AND created_at >= ?",
+    ctx.now - DAY,
+  );
   return json({
     api: 1,
+    // Sidebar badge: automatic blocks in the last 24 hours, for someone to look over.
+    counts: { deny: pending?.deny ?? 0 },
     me: {
       id: String(me.id),
       name: `${me.firstName} ${me.lastName}`,
@@ -441,6 +447,7 @@ async function visitorData(since: number, now: number) {
     const { score, reasons } = threatScore(v.strikes);
     const denied = liveDeny.find((r) => ipInRange(v.ip, r.ip));
     const s = signedIn.get(v.ip);
+    const refused = v.refused + (denied?.hits ?? 0);
     return {
       id: v.ip,
       ip: v.ip,
@@ -452,8 +459,8 @@ async function visitorData(since: number, now: number) {
       asn: v.asn,
       as_org: v.network,
       network: "unknown",
-      hits: v.hits + v.refused,
-      refused: v.refused + (denied?.hits ?? 0),
+      hits: v.hits + refused,
+      refused,
       allowed: v.hits,
       probe_hits: v.strikes.decoy ?? 0,
       first_seen: iso(v.first),
@@ -463,6 +470,7 @@ async function visitorData(since: number, now: number) {
       person: s ? { id: String(s.user_id), name: s.username, username: s.username } : null,
       on_allowlist: liveAllow.some((r) => ipInRange(v.ip, r.ip)),
       denied: !!denied,
+      deny_id: denied ? String(denied.id) : null,
       user_agent: v.ua,
       device: v.ua ? describeDevice(v.ua) : null,
       decision: denied ? "block" : "allow",

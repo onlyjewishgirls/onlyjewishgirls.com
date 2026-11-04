@@ -16,6 +16,8 @@ import type { User } from "../users";
  * auth, CSRF, deny-list, step-up and rate-limit checks can't be skipped.
  */
 
+const NO_STORE = { "Cache-Control": "no-store", "Referrer-Policy": "same-origin" };
+
 export const REVERIFY_URL = "/admin/verify?next=/admin";
 
 export class ConsoleError extends Error {
@@ -33,7 +35,7 @@ export const err = (status: number, code: string, message: string, extra: Record
   new ConsoleError(status, code, message, extra);
 
 export function json(body: Record<string, unknown>, status = 200) {
-  return NextResponse.json({ ok: true, ...body }, { status, headers: { "Cache-Control": "no-store" } });
+  return NextResponse.json({ ok: true, ...body }, { status, headers: NO_STORE });
 }
 
 export interface ConsoleCtx {
@@ -126,7 +128,7 @@ function match(pattern: string, segments: string[]): Record<string, string> | nu
 function errorResponse(e: ConsoleError) {
   return NextResponse.json(
     { ok: false, code: e.code, error: e.message, ...e.extra },
-    { status: e.status, headers: { "Cache-Control": "no-store" } },
+    { status: e.status, headers: NO_STORE },
   );
 }
 

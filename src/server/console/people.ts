@@ -271,6 +271,8 @@ export async function streakView(target: User, now: number) {
     longest: status.longest,
     alive: status.alive,
     deadline: iso(status.deadline),
+    expires_at: iso(status.deadline),
+    leeway_for: status.leeway.map((l) => l.names.join(" · ")),
     hours_left: status.remainingMs === null ? null : Math.round((status.remainingMs / 3_600_000) * 10) / 10,
     restores_used: quota.used,
     restores_left: quota.left,
@@ -799,4 +801,28 @@ export async function emailPerson(ctx: ConsoleCtx) {
   await audited(ctx, "admin.send_email", target, { subject, delivered: delivery.ok, provider: delivery.provider });
   if (!delivery.ok) throw err(502, "delivery_failed", `The email to ${target.email} wasn't sent: ${delivery.error}`);
   return json({ delivery: "sent" });
+}
+
+/** The create form (this site needs first/last name, username, email and mobile; the password is always generated). */
+export async function peopleSchema(ctx: ConsoleCtx) {
+  need(ctx, "people.view");
+  const roles = ctx.isOwner
+    ? [
+        { value: "member", label: "Member" },
+        { value: "admin", label: "Admin" },
+      ]
+    : [{ value: "member", label: "Member" }];
+  return json({
+    create_fields: [
+      { key: "first_name", label: "First name", type: "text", maxlength: 60 },
+      { key: "middle_name", label: "Middle name", type: "text", optional: true, maxlength: 60 },
+      { key: "last_name", label: "Last name", type: "text", maxlength: 60 },
+      { key: "username", label: "Username", type: "text", maxlength: 30 },
+      { key: "email", label: "Email", type: "email" },
+      { key: "phone", label: "Mobile (with country code)", type: "tel", placeholder: "+12125551234" },
+      { key: "role", label: "Role", type: "select", value: "member", options: roles },
+    ],
+    profile_fields: null,
+    note: "A temporary password is generated and shown to you once. They set up a passkey and an authenticator app at first sign-in, then choose their own password.",
+  });
 }

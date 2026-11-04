@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { isAdminRole } from "@/lib/admin/permissions";
 import { isValidTimeZone } from "@/lib/streak/dates";
+import { isUnblockableIp } from "@/lib/security";
 import { looksLikeLoginName } from "@/lib/validation";
 import { sha256 } from "@/server/crypto";
 import { logEvent } from "@/server/events";
@@ -107,7 +108,7 @@ export const POST = api(async (req) => {
     const left = LOGIN_ATTEMPTS_PER_WINDOW - used;
     // The IP threshold (§7) can come first; say which.
     let ipNote = "";
-    if (settings.auto_block_enabled) {
+    if (settings.auto_block_enabled && !isUnblockableIp(ip)) {
       const counts = await strikeCounts(ip, now - settings.auto_block_window_minutes * 60_000);
       const ipLeft = settings.auto_block_failed_passwords - counts.failed_password;
       if (ipLeft < left) ipNote = ` ${ipLeft} more wrong password${ipLeft === 1 ? "" : "s"} from IP ${ip} will block that address.`;

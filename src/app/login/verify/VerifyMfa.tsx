@@ -3,12 +3,11 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FormError } from "@/components/AuthCard";
-import { signInWithPasskey } from "@/components/passkeys";
+import { cancelPasskeyPrompt, signInWithPasskey } from "@/components/passkeys";
 import { postJson, type ApiResult } from "@/lib/api-client";
 import { defaultMfaMethod } from "@/lib/mfa-order";
 
 type Method = "passkey" | "totp" | "recovery";
-
 
 export function VerifyMfa({
   passkey,
@@ -29,10 +28,20 @@ export function VerifyMfa({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function finish(run: () => Promise<ApiResult<Record<string, unknown>>>) {
+  // Each attempt gets a number; switching method abandons the one in flight (and its result).
+  const attempt = useRef(0);
+
+  async function finish(run: () => Promise<ApiResult<Record<string, unknown>>>, { quietCancel = false } = {}) {
+    const mine = ++attempt.current;
     setError(null);
     setBusy(true);
     const res = await run();
+    if (mine !== attempt.current) return;
+    // An automatic prompt the browser refused or the person dismissed just leaves the button there.
+    if (quietCancel && res.status === 0 && /cancelled/i.test(String(res.data.error))) {
+      setBusy(false);
+      return;
+    }
     if (res.data.next && (res.ok || res.status === 401)) {
       router.push(res.data.next);
       router.refresh();
@@ -47,7 +56,7 @@ export function VerifyMfa({
   useEffect(() => {
     if (autoStarted.current || method !== "passkey" || !passkey) return;
     autoStarted.current = true;
-    finish(signInWithPasskey);
+    finish(signInWithPasskey, { quietCancel: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -57,6 +66,9 @@ export function VerifyMfa({
   };
 
   const switchTo = (m: Method) => {
+    attempt.current++;
+    cancelPasskeyPrompt();
+    setBusy(false);
     setMethod(m);
     setCode("");
     setError(null);

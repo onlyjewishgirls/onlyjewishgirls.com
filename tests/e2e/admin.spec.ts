@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { addVirtualAuthenticator, collectConsoleErrors, completeMfaSetup, query, screenshot, signIn, sql } from "./helpers";
+import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, query, screenshot, signIn, sql } from "./helpers";
 
 const ORIGIN = "http://localhost:3100";
 
@@ -54,15 +54,17 @@ const toast = (page: Page) => page.getByTestId("toast");
 
 test.describe.configure({ mode: "serial" });
 
-test("owner monitors and controls accounts from the admin panel", async ({ page, browser }) => {
+test("owner monitors and controls accounts from the classic admin panel", async ({ page, browser }) => {
   test.setTimeout(240_000);
   const ownerErrors = collectConsoleErrors(page);
   await addVirtualAuthenticator(page);
+  await blockPasskeyAutofill(page);
 
   const memberContext = await browser.newContext({ baseURL: ORIGIN, timezoneId: "America/New_York" });
   const m = await memberContext.newPage();
   const memberErrors = collectConsoleErrors(m);
   await addVirtualAuthenticator(m);
+  await blockPasskeyAutofill(m);
 
   let memberId = 0;
   let temporaryPassword = "";
@@ -72,7 +74,8 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await expect(page.getByRole("link", { name: "Admin" })).toHaveCount(0);
     sql(`UPDATE users SET role = 'owner' WHERE username = '${owner.username}'`);
     await page.reload();
-    await page.getByRole("link", { name: "Admin" }).click();
+    await expect(page.getByRole("link", { name: "Admin" })).toHaveAttribute("href", "/admin");
+    await page.goto("/admin/overview");
     await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     await expect(page.getByText("Emails aren't set up")).toBeVisible();
     await expect(page.getByText("New accounts per day")).toBeVisible();
@@ -152,12 +155,13 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await m.reload();
     await expect(m).toHaveURL("/login");
     await signIn(m, member.username, member.newPassword);
-    await expect(m.getByText("This account has been suspended")).toBeVisible();
+    await expect(m.getByText("This account is suspended by an administrator. Reason: Testing the panel")).toBeVisible();
   });
 
   await test.step("a password typed as a username is never logged", async () => {
     await signIn(m, "Wq3#Lp!Zn8Vb$Kd5", "anything");
-    await expect(m.getByText("Incorrect username/email or password.")).toBeVisible();
+    // Said back to the person who typed it (PORTAL-STANDARD §2), but never stored.
+    await expect(m.getByTestId("identifier-error")).toHaveText('No account exists with the username or email "Wq3#Lp!Zn8Vb$Kd5".');
     await page.goto("/admin/activity?group=signin");
     await expect(page.locator('[data-event="signin.unknown"]').first()).toBeVisible();
     await expect(page.getByText(/wq3#lp/i)).toHaveCount(0);
@@ -173,7 +177,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await screenshot(page, "admin-4-activity");
 
     await signIn(m, member.username, member.newPassword);
-    await m.getByRole("button", { name: /Use my passkey/ }).click();
+    // The passkey prompt starts by itself (PORTAL-STANDARD §3).
     await expect(m).toHaveURL("/home");
   });
 
@@ -203,8 +207,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await page.getByRole("button", { name: "Change", exact: true }).click();
     await expect(toast(page)).toContainText("is now an Admin");
 
-    await m.reload();
-    await m.getByRole("link", { name: "Admin" }).click();
+    await m.goto("/admin/overview");
     await expect(m.getByRole("heading", { name: "Overview" })).toBeVisible();
     const ownerId = query<{ id: number }>(`SELECT id FROM users WHERE username = '${owner.username}'`)[0].id;
     await m.goto(`/admin/users/${ownerId}`);
@@ -231,9 +234,9 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
     await m.reload();
     await expect(m).toHaveURL("/login");
     await signIn(m, member.username, member.newPassword);
-    await expect(m.getByText("Incorrect username/email or password.")).toBeVisible();
+    await expect(m.getByTestId("password-error")).toHaveText(`Incorrect password for ${member.username}. 9 attempts left before the account locks.`);
     await signIn(m, member.username, password);
-    await m.getByRole("button", { name: /Use my passkey/ }).click();
+    // The passkey prompt starts by itself (PORTAL-STANDARD §3).
     await expect(m).toHaveURL("/change-password");
     await m.locator("#password").fill(member.secondPassword);
     await m.locator("#confirmPassword").fill(member.secondPassword);
@@ -306,7 +309,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
       { path: "/reset-password", referrer: null, language: "he-IL", user_id: null },
     ]);
 
-    await page.goto("/admin");
+    await page.goto("/admin/overview");
     await expect(page.getByText("Visitors (24 hours)")).toBeVisible();
     await page.getByRole("navigation", { name: "Admin sections" }).getByRole("link", { name: "Visitors" }).click();
     await expect(page.getByRole("heading", { name: "Visitors" })).toBeVisible();
@@ -330,7 +333,7 @@ test("owner monitors and controls accounts from the admin panel", async ({ page,
   });
 
   await test.step("the overview counts it all", async () => {
-    await page.goto("/admin");
+    await page.goto("/admin/overview");
     await expect(page.getByText("Signed in now")).toBeVisible();
     await page.setViewportSize({ width: 412, height: 915 });
     await screenshot(page, "admin-5-overview-phone");

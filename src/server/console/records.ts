@@ -59,7 +59,13 @@ export function auditEntry(e: AdminEvent) {
     category: category(e.type),
     severity: severity(e.type),
     outcome: outcome(e.type),
-    actor: e.actorId !== null || e.actorUsername ? { id: String(e.actorId ?? ""), name: e.actorUsername ?? "(deleted)", username: e.actorUsername } : null,
+    // Sign-ins, streaks and the like are done by the person themselves; system events have no actor.
+    actor:
+      e.actorId !== null || e.actorUsername
+        ? { id: String(e.actorId ?? ""), name: e.actorUsername ?? "(deleted)", username: e.actorUsername }
+        : !e.type.startsWith("security.") && e.username
+          ? { id: String(e.userId ?? ""), name: e.username, username: e.username }
+          : null,
     target: e.userId !== null || e.username ? { type: "person", id: String(e.userId ?? ""), label: e.username ?? "(deleted)" } : null,
     ip: e.ip,
     country: e.country,
@@ -123,6 +129,12 @@ export async function listAudit(ctx: ConsoleCtx) {
   if (target) {
     where.push("(user_id = ? OR LOWER(username) = ?)");
     params.push(Number(target) || -1, target.toLowerCase());
+  }
+  const person = ctx.query.get("person");
+  if (person) {
+    // Entries where that person is the actor or the target.
+    where.push("(user_id = ? OR actor_id = ?)");
+    params.push(Number(person) || -1, Number(person) || -1);
   }
   const from = ctx.query.get("from");
   if (from && /^\d{4}-\d{2}-\d{2}$/.test(from)) {
@@ -205,6 +217,21 @@ function toAdminEvent(row: {
     revertedAt: row.reverted_at,
     revertedBy: row.reverted_by,
   };
+}
+
+/** One entry, for #audit/<id> deep links from alert emails. */
+export async function getAudit(ctx: ConsoleCtx) {
+  need(ctx, "audit.view");
+  const id = idParam(ctx);
+  const row = await first<Parameters<typeof toAdminEvent>[0]>("SELECT * FROM events WHERE id = ?", id);
+  if (!row) throw err(404, "not_found", `Audit entry ${id} doesn't exist (entries are kept for a year).`);
+  const alert = await first<{ id: number }>("SELECT id FROM security_alerts WHERE audit_id = ? ORDER BY id LIMIT 1", id);
+  return json({ entry: { ...auditEntry(toAdminEvent(row)), alert_id: alert ? String(alert.id) : null } });
+}
+
+export async function auditUnavailable(ctx: ConsoleCtx): Promise<Response> {
+  need(ctx, "audit.view");
+  throw err(404, "not_found", "This site's audit log has no hash chain to verify and no CSV export (features audit_verify / audit_export are off).");
 }
 
 export async function recentSecurityEvents(limit = 15) {

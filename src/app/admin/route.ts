@@ -14,12 +14,14 @@ const html = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="color-scheme" content="light dark">
 <title>Admin console · ${APP_NAME}</title>
 <link rel="stylesheet" href="/console/console.css?v=${KIT_VERSION}">
-<style>html,body{margin:0;min-height:100%}</style>
 </head>
 <body>
-<div id="console-root" data-api-base="/api/console" data-sign-out-url="/login" data-home-url="/home" data-login-url="/login" data-brand="${APP_NAME}"></div>
+<div id="console-root" data-api-base="/api/console" data-sign-out-url="/login" data-home-url="/home" data-login-url="/login" data-brand="">
+<noscript>The admin console needs JavaScript.</noscript>
+</div>
 <script src="/console/console.js?v=${KIT_VERSION}" defer></script>
 </body>
 </html>`;
@@ -42,8 +44,9 @@ export async function GET(req: NextRequest) {
     headers: {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
+      "Referrer-Policy": "same-origin",
       "Content-Security-Policy":
-        "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
     },
   });
 }
