@@ -22,7 +22,7 @@ import { APP_NAME, isLocalHost } from "../env";
 import { logEvent } from "../events";
 import { matchingRules } from "../ip-rules";
 import { LOGIN_ATTEMPTS_PER_WINDOW, loginAccountKey } from "../login-rules";
-import { deliverEmail, simpleHtml } from "../mailer";
+import { deliverEmail, emailConfigured, simpleHtml } from "../mailer";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "../mfa-routes";
 import { sendPasswordResetEmail } from "../password-reset";
 import { hashPassword } from "../passwords";
@@ -43,6 +43,7 @@ import {
   resetTwoStep,
   setAdminLock,
   setAdminNote,
+  setEmailOtpEnabled,
   setMustChangePassword,
   setPermissions,
   setRole,
@@ -80,6 +81,8 @@ function mfaKinds(u: User, passkeys: number): MfaKind[] {
   const kinds: MfaKind[] = [];
   if (passkeys > 0) kinds.push("passkey");
   if (u.totpEnabledAt !== null) kinds.push("totp");
+  // Email codes count once two-step sign-in has been set up (see mfaState in server/mfa.ts).
+  if (emailConfigured() && u.emailOtpEnabled && (passkeys > 0 || u.totpEnabledAt !== null || u.recoveryCodesCreatedAt !== null)) kinds.push("email");
   if (u.recoveryCodesCreatedAt !== null) kinds.push("recovery");
   return sortMfa(kinds);
 }
@@ -219,6 +222,7 @@ const SELF_REASONS: Partial<Record<AdminAction, string>> = {
   lock: "You can't lock your own account.",
   set_permissions: "You can't change your own permissions.",
   force_change: "Change your own password from your account page.",
+  toggle_email_otp: "You can't change your own sign-in methods here.",
   set_streak: "Only the owner can set their own streak.",
   grant_restores: "Only the owner can grant restores to themselves.",
 };
@@ -254,6 +258,7 @@ function actionsFor(ctx: ConsoleCtx, target: User, status: string) {
     mfa_reset: a("reset_two_step"),
     passkey_remove: a("remove_passkey"),
     totp_reset: a("disable_totp", { when: target.totpEnabledAt !== null, reason: "No authenticator app is connected." }),
+    email_otp_toggle: a("toggle_email_otp", { when: emailConfigured(), reason: "This site's email isn't configured, so email codes aren't offered." }),
     sessions_revoke: a("sign_out_everywhere"),
     ip_allow: ctx.caps.has("ips.manage") ? { allowed: true } : { allowed: false, reason: "Only the owner manages the IP lists." },
     ip_block: ctx.caps.has("ips.manage") ? { allowed: true } : { allowed: false, reason: "Only the owner manages the IP lists." },
@@ -381,6 +386,19 @@ export async function getPerson(ctx: ConsoleCtx) {
           })),
         },
         { kind: "totp", label: "Authenticator app", enrolled: target.totpEnabledAt !== null, created_at: iso(target.totpEnabledAt) },
+        // Only listed when this site can send email (PORTAL-STANDARD §3: never offer what can't work).
+        ...(emailConfigured()
+          ? [
+              {
+                kind: "email",
+                label: "Email code",
+                enrolled: target.emailOtpEnabled,
+                enabled: target.emailOtpEnabled,
+                toggle: can(ctx.me, "toggle_email_otp", target),
+                note: `Codes go to ${target.email}. Off for 24 hours after a password reset by email.`,
+              },
+            ]
+          : []),
         {
           kind: "recovery",
           label: `Recovery codes (${codes?.n ?? 0} unused)`,
@@ -825,4 +843,18 @@ export async function peopleSchema(ctx: ConsoleCtx) {
     profile_fields: null,
     note: "A temporary password is generated and shown to you once. They set up a passkey and an authenticator app at first sign-in, then choose their own password.",
   });
+}
+
+export async function toggleEmailOtp(ctx: ConsoleCtx) {
+  need(ctx, "people.mfa");
+  const target = await loadTarget(ctx);
+  requireAction(ctx, "toggle_email_otp", target);
+  if (!emailConfigured()) throw err(400, "unavailable", "This site's email isn't configured, so email codes can't be used.");
+  if (typeof ctx.body.enabled !== "boolean") throw err(400, "validation", "Send { enabled: true } or { enabled: false }.", { field: "enabled" });
+  const enabled = ctx.body.enabled;
+  if (enabled !== target.emailOtpEnabled) {
+    await setEmailOtpEnabled(target.id, enabled);
+    await audited(ctx, "admin.toggle_email_otp", target, { from: target.emailOtpEnabled ? "on" : "off", to: enabled ? "on" : "off" });
+  }
+  return json({});
 }

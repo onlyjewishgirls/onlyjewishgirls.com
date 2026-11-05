@@ -26,6 +26,7 @@ const SELF_LOCKOUT: AdminAction[] = [
   "lock",
   "set_permissions",
   "force_change",
+  "toggle_email_otp",
 ];
 /** PORTAL-STANDARD §4: owner-or-streaks.manage, never an admin on themselves. */
 const STREAK: AdminAction[] = ["set_streak", "grant_restores"];

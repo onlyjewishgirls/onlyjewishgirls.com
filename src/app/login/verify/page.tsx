@@ -11,7 +11,7 @@ export default async function VerifyPage() {
   const { mfa_default_method: preferred } = await getSettings();
   return (
     <AuthCard title="Verify it's you" subtitle="Use one of your second factors to finish signing in.">
-      <VerifyMfa passkey={mfa.passkeys > 0} totp={mfa.totp} recovery={mfa.recoveryCodes} preferred={preferred} />
+      <VerifyMfa passkey={mfa.passkeys > 0} totp={mfa.totp} email={mfa.email} recovery={mfa.recoveryCodes} preferred={preferred} />
     </AuthCard>
   );
 }

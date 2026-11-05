@@ -25,6 +25,7 @@ export const ROUTES: Route[] = [
   { method: "POST", pattern: "people/:id/force-change", handler: people.forceChange, write: true },
   { method: "POST", pattern: "people/:id/mfa/reset", handler: people.resetMfa, write: true },
   { method: "POST", pattern: "people/:id/mfa/totp/reset", handler: people.resetTotp, write: true },
+  { method: "POST", pattern: "people/:id/mfa/email", handler: people.toggleEmailOtp, write: true },
   { method: "DELETE", pattern: "people/:id/mfa/passkeys/:pid", handler: people.removePersonPasskey, write: true },
   { method: "POST", pattern: "people/:id/sessions/revoke", handler: people.revokePersonSessions, write: true },
   { method: "POST", pattern: "people/:id/streak", handler: people.setPersonStreak, write: true },

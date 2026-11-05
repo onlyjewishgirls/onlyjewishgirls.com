@@ -32,6 +32,7 @@ const ALERTS: Partial<Record<EventType, AlertEvent>> = {
   "mfa.recovery_codes": "mfa_changed",
   "admin.remove_passkey": "mfa_changed",
   "admin.disable_totp": "mfa_changed",
+  "admin.toggle_email_otp": "mfa_changed",
   "admin.clear_recovery_codes": "mfa_changed",
   "admin.reset_two_step": "mfa_changed",
   "password.reset": "password_changed",

@@ -7,23 +7,36 @@ import { cancelPasskeyPrompt, signInWithPasskey } from "@/components/passkeys";
 import { postJson, type ApiResult } from "@/lib/api-client";
 import { defaultMfaMethod } from "@/lib/mfa-order";
 
-type Method = "passkey" | "totp" | "recovery";
+type Method = "passkey" | "totp" | "email" | "recovery";
 
 export function VerifyMfa({
   passkey,
   totp,
+  email = false,
   recovery,
   preferred = "passkey",
 }: {
   passkey: boolean;
   totp: boolean;
+  /** Email codes are available for this account (email configured and on). */
+  email?: boolean;
   recovery: boolean;
   preferred?: "passkey" | "totp";
 }) {
   const router = useRouter();
   const [method, setMethod] = useState<Method>(
-    (defaultMfaMethod({ passkey, totp, recovery }, preferred) as Method | null) ?? "recovery",
+    (defaultMfaMethod({ passkey, totp, email, recovery }, preferred) as Method | null) ?? "recovery",
   );
+  const [emailSent, setEmailSent] = useState<string | null>(null);
+
+  async function sendEmailCode() {
+    setError(null);
+    setBusy(true);
+    const res = await postJson<{ message?: string }>("/api/mfa/email/send");
+    setBusy(false);
+    if (res.ok) setEmailSent(res.data.message ?? "Code sent.");
+    else setError(res.data.error ?? `The server answered ${res.status}.`);
+  }
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,6 +122,44 @@ export function VerifyMfa({
         </form>
       )}
 
+      {method === "email" && (
+        <div className="space-y-3">
+          {!emailSent ? (
+            <button type="button" className="btn-primary w-full py-3" disabled={busy} onClick={sendEmailCode}>
+              ✉️ {busy ? "Sending…" : "Email me a code"}
+            </button>
+          ) : (
+            <form onSubmit={submitCode("/api/mfa/email/verify")} className="space-y-3">
+              <p role="status" className="text-sm text-muted">
+                {emailSent}
+              </p>
+              <label htmlFor="email-code" className="label">
+                6-digit code from the email
+              </label>
+              <input
+                id="email-code"
+                name="email-code"
+                className="input text-center font-mono text-2xl tracking-[0.4em]"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="\d{6}"
+                maxLength={6}
+                required
+                autoFocus
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              />
+              <button type="submit" className="btn-primary w-full py-3" disabled={busy || code.length !== 6}>
+                Verify
+              </button>
+              <button type="button" className="link text-sm" disabled={busy} onClick={sendEmailCode}>
+                Send a new code
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       {method === "recovery" && (
         <form onSubmit={submitCode("/api/mfa/recovery-codes/verify")} className="space-y-3">
           <label htmlFor="recovery" className="label">
@@ -161,6 +212,17 @@ export function VerifyMfa({
                 </button>
               ) : (
                 <span className="text-muted">Authenticator app (current)</span>
+              )}
+            </li>
+          )}
+          {email && (
+            <li data-method="email">
+              {method !== "email" ? (
+                <button type="button" className="link" onClick={() => switchTo("email")}>
+                  Email code
+                </button>
+              ) : (
+                <span className="text-muted">Email code (current)</span>
               )}
             </li>
           )}

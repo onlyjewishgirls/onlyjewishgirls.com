@@ -49,6 +49,8 @@ export interface User {
   /** Locked by an administrator until this time (Number.MAX_SAFE_INTEGER-ish = until unlocked). */
   lockedUntil: number | null;
   lockedReason: string | null;
+  /** Email codes allowed as a second factor for this person (admin toggle). */
+  emailOtpEnabled: boolean;
   createdAt: number;
 }
 
@@ -86,6 +88,7 @@ export interface UserRow {
   permissions: string | null;
   locked_until: number | null;
   locked_reason: string | null;
+  email_otp_enabled?: number;
   created_at: number;
 }
 
@@ -137,6 +140,7 @@ export function toUser(row: UserRow | null): User | null {
     permissions: parsePermissions(row.permissions),
     lockedUntil: row.locked_until ?? null,
     lockedReason: row.locked_reason ?? null,
+    emailOtpEnabled: row.email_otp_enabled !== 0,
     createdAt: row.created_at,
   };
 }
@@ -478,6 +482,7 @@ export async function resetTwoStep(userId: number) {
   await batch([
     ["DELETE FROM passkeys WHERE user_id = ?", userId],
     ["DELETE FROM recovery_codes WHERE user_id = ?", userId],
+    ["DELETE FROM email_codes WHERE user_id = ?", userId],
     [
       `UPDATE users SET totp_secret_enc = NULL, totp_pending_secret_enc = NULL, totp_last_step = NULL,
                         totp_enabled_at = NULL, recovery_codes_created_at = NULL
@@ -580,4 +585,11 @@ export async function setMustChangePassword(userId: number, on: boolean) {
 export async function findPasskeyById(id: string): Promise<Passkey | null> {
   const row = await first<PasskeyRow>("SELECT * FROM passkeys WHERE id = ?", id);
   return row ? toPasskey(row) : null;
+}
+
+export async function setEmailOtpEnabled(userId: number, enabled: boolean) {
+  await batch([
+    ["UPDATE users SET email_otp_enabled = ? WHERE id = ?", enabled ? 1 : 0, userId],
+    ["DELETE FROM email_codes WHERE user_id = ? AND used_at IS NULL", userId],
+  ]);
 }

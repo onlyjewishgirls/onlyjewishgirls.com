@@ -46,6 +46,7 @@ export const ADMIN_ACTIONS = [
   "force_change",
   "grant_restores",
   "send_email",
+  "toggle_email_otp",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -67,6 +68,7 @@ const NOT_ON_SELF = new Set<AdminAction>([
   "lock",
   "set_permissions",
   "force_change",
+  "toggle_email_otp",
 ]);
 
 /**

@@ -10,7 +10,7 @@ import { getAuth, MAX_MFA_FAILURES, recentlyVerified, recordMfaFailure, startSes
 import { findUserById, setLastLogin } from "./users";
 
 /** How a sign-in's second step was completed. */
-export type SecondFactor = "passkey" | "totp" | "recovery_code" | "first_setup";
+export type SecondFactor = "passkey" | "totp" | "email" | "recovery_code" | "first_setup";
 
 /**
  * Wrong second-factor attempts allowed per account per hour, across all

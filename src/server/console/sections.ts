@@ -47,7 +47,7 @@ export const FEATURES = {
   people_multi_role: false,
   people_lock: true,
   people_disable: false,
-  mfa_email_toggle: false, // no email codes on this site
+  mfa_email_toggle: false, // set per request in bootstrap: on when email is configured
   mfa_require: false, // two-step is mandatory for everyone
   access_requests: false,
   roles_rank: false,
@@ -102,7 +102,7 @@ export async function bootstrap(ctx: ConsoleCtx) {
       people_noun: "people",
       staff_id_label: "Account ID",
     },
-    features: FEATURES,
+    features: { ...FEATURES, mfa_email_toggle: emailConfigured() },
     your_ip: ctx.ip,
     banner: banners.length ? { tone: "warn", text: banners.join(" ") } : null,
     links: [

@@ -235,4 +235,18 @@ export const MIGRATIONS: string[][] = [
       expires_at INTEGER NOT NULL
     )`,
   ],
+  [
+    // Email codes (PORTAL-STANDARD §3: passkey, authenticator app, email). On per person by default;
+    // only offered when email is configured (see email-otp.ts).
+    "ALTER TABLE users ADD COLUMN email_otp_enabled INTEGER NOT NULL DEFAULT 1",
+    `CREATE TABLE IF NOT EXISTS email_codes (
+      id          INTEGER PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code_hash   TEXT NOT NULL,                   -- SHA-256 of the code with the account id
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      used_at     INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS email_codes_user ON email_codes(user_id, created_at)`,
+  ],
 ];
