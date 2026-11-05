@@ -1,24 +1,60 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { FormError } from "@/components/AuthCard";
-import { signInWithPasskey } from "@/components/passkeys";
+import { cancelPasskeyPrompt, signInWithPasskey } from "@/components/passkeys";
 import { postJson, type ApiResult } from "@/lib/api-client";
+import { defaultMfaMethod } from "@/lib/mfa-order";
 
-type Method = "passkey" | "totp" | "recovery";
+type Method = "passkey" | "totp" | "email" | "recovery";
 
-export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp: boolean; recovery: boolean }) {
+export function VerifyMfa({
+  passkey,
+  totp,
+  email = false,
+  recovery,
+  preferred = "passkey",
+}: {
+  passkey: boolean;
+  totp: boolean;
+  /** Email codes are available for this account (email configured and on). */
+  email?: boolean;
+  recovery: boolean;
+  preferred?: "passkey" | "totp";
+}) {
   const router = useRouter();
-  const [method, setMethod] = useState<Method>(passkey ? "passkey" : totp ? "totp" : "recovery");
+  const [method, setMethod] = useState<Method>(
+    (defaultMfaMethod({ passkey, totp, email, recovery }, preferred) as Method | null) ?? "recovery",
+  );
+  const [emailSent, setEmailSent] = useState<string | null>(null);
+
+  async function sendEmailCode() {
+    setError(null);
+    setBusy(true);
+    const res = await postJson<{ message?: string }>("/api/mfa/email/send");
+    setBusy(false);
+    if (res.ok) setEmailSent(res.data.message ?? "Code sent.");
+    else setError(res.data.error ?? `The server answered ${res.status}.`);
+  }
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function finish(run: () => Promise<ApiResult<Record<string, unknown>>>) {
+  // Each attempt gets a number; switching method abandons the one in flight (and its result).
+  const attempt = useRef(0);
+
+  async function finish(run: () => Promise<ApiResult<Record<string, unknown>>>, { quietCancel = false } = {}) {
+    const mine = ++attempt.current;
     setError(null);
     setBusy(true);
     const res = await run();
+    if (mine !== attempt.current) return;
+    // An automatic prompt the browser refused or the person dismissed just leaves the button there.
+    if (quietCancel && res.status === 0 && /cancelled/i.test(String(res.data.error))) {
+      setBusy(false);
+      return;
+    }
     if (res.data.next && (res.ok || res.status === 401)) {
       router.push(res.data.next);
       router.refresh();
@@ -28,12 +64,24 @@ export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp:
     setError(res.data.error ?? "That didn't work. Please try again.");
   }
 
+  // Default = passkey: the prompt starts by itself (once) when the account has one.
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoStarted.current || method !== "passkey" || !passkey) return;
+    autoStarted.current = true;
+    finish(signInWithPasskey, { quietCancel: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const submitCode = (url: string) => (e: FormEvent) => {
     e.preventDefault();
     finish(() => postJson(url, { code }));
   };
 
   const switchTo = (m: Method) => {
+    attempt.current++;
+    cancelPasskeyPrompt();
+    setBusy(false);
     setMethod(m);
     setCode("");
     setError(null);
@@ -74,6 +122,44 @@ export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp:
         </form>
       )}
 
+      {method === "email" && (
+        <div className="space-y-3">
+          {!emailSent ? (
+            <button type="button" className="btn-primary w-full py-3" disabled={busy} onClick={sendEmailCode}>
+              ✉️ {busy ? "Sending…" : "Email me a code"}
+            </button>
+          ) : (
+            <form onSubmit={submitCode("/api/mfa/email/verify")} className="space-y-3">
+              <p role="status" className="text-sm text-muted">
+                {emailSent}
+              </p>
+              <label htmlFor="email-code" className="label">
+                6-digit code from the email
+              </label>
+              <input
+                id="email-code"
+                name="email-code"
+                className="input text-center font-mono text-2xl tracking-[0.4em]"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="\d{6}"
+                maxLength={6}
+                required
+                autoFocus
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+              />
+              <button type="submit" className="btn-primary w-full py-3" disabled={busy || code.length !== 6}>
+                Verify
+              </button>
+              <button type="button" className="link text-sm" disabled={busy} onClick={sendEmailCode}>
+                Send a new code
+              </button>
+            </form>
+          )}
+        </div>
+      )}
+
       {method === "recovery" && (
         <form onSubmit={submitCode("/api/mfa/recovery-codes/verify")} className="space-y-3">
           <label htmlFor="recovery" className="label">
@@ -101,24 +187,57 @@ export function VerifyMfa({ passkey, totp, recovery }: { passkey: boolean; totp:
       <FormError message={error} />
 
       <div className="border-t border-border pt-4 text-sm">
-        <p className="mb-2 text-muted">Other ways to verify:</p>
-        <div className="flex flex-col items-start gap-1.5">
-          {passkey && method !== "passkey" && (
-            <button type="button" className="link" onClick={() => switchTo("passkey")}>
-              Use a passkey
-            </button>
+        <p className="mb-2 text-muted">Use another method:</p>
+        <ul className="flex flex-col items-start gap-1.5" data-testid="mfa-methods">
+          <li data-method="passkey">
+            {passkey ? (
+              method !== "passkey" ? (
+                <button type="button" className="link" onClick={() => switchTo("passkey")}>
+                  Passkey
+                </button>
+              ) : (
+                <span className="text-muted">Passkey (current)</span>
+              )
+            ) : (
+              <span className="text-muted">
+                Passkey — set one up: you&apos;ll be asked to add one right after you verify with another method.
+              </span>
+            )}
+          </li>
+          {totp && (
+            <li data-method="totp">
+              {method !== "totp" ? (
+                <button type="button" className="link" onClick={() => switchTo("totp")}>
+                  Authenticator app
+                </button>
+              ) : (
+                <span className="text-muted">Authenticator app (current)</span>
+              )}
+            </li>
           )}
-          {totp && method !== "totp" && (
-            <button type="button" className="link" onClick={() => switchTo("totp")}>
-              Use my authenticator app
-            </button>
+          {email && (
+            <li data-method="email">
+              {method !== "email" ? (
+                <button type="button" className="link" onClick={() => switchTo("email")}>
+                  Email code
+                </button>
+              ) : (
+                <span className="text-muted">Email code (current)</span>
+              )}
+            </li>
           )}
-          {recovery && method !== "recovery" && (
-            <button type="button" className="link" onClick={() => switchTo("recovery")}>
-              Use a recovery code
-            </button>
+          {recovery && (
+            <li data-method="recovery">
+              {method !== "recovery" ? (
+                <button type="button" className="link" onClick={() => switchTo("recovery")}>
+                  Recovery code
+                </button>
+              ) : (
+                <span className="text-muted">Recovery code (current)</span>
+              )}
+            </li>
           )}
-        </div>
+        </ul>
       </div>
     </div>
   );

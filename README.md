@@ -15,7 +15,7 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection |
+| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection, and (against an in-memory SQLite stand-in for D1, [`tests/unit/harness.ts`](tests/unit/harness.ts)) the real sign-in, MFA, streak-restore and console routes: exact errors, MFA order, restore limits, set-streak rules, alert routing and dedupe, auto-blacklist |
 | `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete, visitor log). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
 | `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
@@ -50,7 +50,9 @@ Nobody gets past the setup screen until they have **both**:
 
 After that they get **10 one-time recovery codes**.
 
-Signing in = password, then any one of: passkey, authenticator code, or recovery code.
+Signing in = username or email **and** password on one screen, then any one of: passkey, authenticator code, or recovery code. The verify screen starts the passkey prompt by itself and lists the other methods in the standard order: passkey, authenticator app, **email code**, recovery code. Email codes ([`src/server/email-otp.ts`](src/server/email-otp.ts)) are 6 digits, expire after 10 minutes, work once and are stored only as a hash; they go through the same Resend/Plunk transport, at most one a minute and 5 an hour. They're offered only when email is configured, only once the account has set up two-step sign-in (a new or admin-reset account still sets up a passkey and an authenticator app first), never for 24 hours after a password reset by emailed link (so a mailbox alone can't do both halves of a sign-in), and an admin can turn them off per person. Admin re-verification still takes a passkey or authenticator code. If an admin removed someone's passkey, "Passkey — set one up" is still listed first and they add one right after verifying. **Sign in with a passkey** on the sign-in page (and passkey autofill in the username field) signs in with a passkey alone: a passkey with user verification is both factors.
+
+**Errors are exact** (the owner's cross-site portal standard, §2; this replaced the old "Incorrect username/email or password" policy). The sign-in API answers `{ ok:false, code, field, error }` and the form shows `error` under the field it names, or as a banner: `no_account`, `wrong_password` (with attempts left before the account locks, and how many more from this IP before it's blocked), `account_locked` (until when, and why), `account_suspended` (with the reason), `ip_blocked`, `ip_not_allowed`, `rate_limited` (the IP and the wait), `mfa_wrong_code` (incorrect / expired / already used, for authenticator, email and recovery codes), `passkey_failed` (cancelled, not on this account, signature invalid).
 
 Safeguards:
 
@@ -64,7 +66,7 @@ Safeguards:
 
 **Forgot password?** on the sign-in page asks for a username or email and emails a reset link.
 
-- The answer is the same whether or not the account exists, and the email is sent after the response, so neither the message nor the timing gives away who has an account.
+- It says exactly what happened: no such account, suspended, the hourly limit reached, or "we emailed a reset link for *username* to ja•••@example.com" (masked so the page can't be used to harvest addresses). The email is sent after the response.
 - The link is single-use and expires after 30 minutes. Only a SHA-256 hash of its token is stored. Asking again replaces the old link. Each account gets at most 3 emails an hour.
 - The new password must pass every rule above (checked against the account's own name, username, email and phone), and it can't be the current password.
 - Saving it signs the account out on every device and emails a "your password was changed" notice.
@@ -83,14 +85,42 @@ The engine is [`src/lib/streak/engine.ts`](src/lib/streak/engine.ts), a set of p
 - **The count goes up once per new calendar day** you check in on. Shabbat/Yom Tov days you skipped over are added automatically, so keeping Shabbat never costs a day.
 - **Miss the deadline** and the next check-in starts again at 1. Your longest streak is kept.
 - A ⌛ shows when less than 4 hours are left.
+- **Courtesy restore.** If a streak was lost, Home shows **Restore my streak (2 of 3 left this month)**. It puts the lost count back (WAMV's `restorePlan()`, ported in [`src/lib/streak/restore.ts`](src/lib/streak/restore.ts)): a streak that broke on today's check-in becomes the old count plus today; one that lapsed with no check-in since becomes the old count plus one. The allowance is the `streak_restores` setting (default 3 per calendar month in the portal time zone, 0 = off), plus any extra an admin grants for the month. Every restore is logged in `streak_restores` and the activity log.
+- **Admin set-streak.** In the console's person record, "Set streak to N" (0–10,000; WAMV's `setPlan()`: N includes today and the window restarts now). It never uses the person's restores, is logged in `streak_restores` (kind `admin`) and the audit log, and sends a security alert. The owner can set anyone's streak, including their own; an admin needs the `streaks.manage` permission (the owner grants it in the record) and can't set their own.
 
 The unit tests sweep a full year in New York, Jerusalem, London, Melbourne, Los Angeles, Tromsø (polar) and an unknown location, and check that no deadline ever lands inside Shabbat or Yom Tov.
 
 Numbers are constants at the top of the engine (`STREAK_WINDOW_HOURS`, `AFTER_HOLY_DAY_HOURS`, `AT_RISK_HOURS`) and the calendar (`STARTS_BEFORE_SUNSET_MINUTES`, `ENDS_AFTER_SUNSET_MINUTES`).
 
-## Admin panel
+## Admin console
 
-`/admin`, linked from the header for admins. Anyone else gets a 404.
+`/admin` is the shared **Console kit** (vendored as-is in [`public/console/`](public/console), served by [`src/app/admin/route.ts`](src/app/admin/route.ts)) on top of the `/api/console/*` JSON API ([`src/server/console/`](src/server/console), contract in the kit's `API.md`). Anyone who isn't a signed-in admin gets a 404 (and a strike against their IP). Changes need a passkey or authenticator check in the last 15 minutes; the console's **Re-verify** button goes to `/admin/verify`.
+
+Sections: Overview (stats, security posture, queue, recent security events); People (search and filters, the full record: profile, role, extra permissions, suspend/activate, lock/unlock, temporary password or emailed reset link, force a password change, passkeys/authenticator/recovery codes, sessions, linked IPs, streak set/grant, activity, email the person); Roles & permissions (the three fixed roles); Streaks (leaderboard, restores log, restore setting); Settings; Security (visitors by IP with a threat score and band, "who has been knocking"); IP allowlist; Deny list (manual and auto entries with evidence, one-click Unblock that can re-add to the allowlist); Sessions; Audit log (filters, revert); Security alerts (what was emailed, to whom, delivery status). Off on this site, so not shown: invitations (accounts are created with a temporary password), devices (no trusted-device model), country rule, per-person "require MFA" (it's mandatory for everyone). The per-person email-code toggle shows only when email is configured.
+
+The classic panel is still at `/admin/overview`, `/admin/users`, `/admin/activity` and `/admin/visitors` (the full page-view log with pages, referrers and browser IDs, which the console's Security section summarises by IP), linked from the console sidebar. Its endpoints (`/api/admin/*`) still work.
+
+### Security alerts
+
+Every security event emails ([`src/server/event-alerts.ts`](src/server/event-alerts.ts), [`src/server/alerts.ts`](src/server/alerts.ts)): failed sign-ins and two-step codes, lockouts, sign-in from a new device/IP/country, every successful admin sign-in, MFA changes, password changes and resets, role/permission changes, accounts created/suspended/locked/deleted, IP list changes, auto-blacklisting, a visitor reaching the hostile band, decoy hits, refused admin requests, admin set-streak and settings changes. Subject `[SECURITY] OnlyJewishGirls — <event>`; the body has what, who, IP, country, user agent, device, time (portal time zone and UTC) and a link to the audit entry (`/admin#audit/<id>`).
+
+- **From** `ALERTS_EMAIL_FROM`, else `ALERT_EMAIL_FROM`, else `securityalerts@<apex>`; **to** `ALERTS_EMAIL_TO`, else `ALERT_EMAIL_TO`, else `soc@<apex>`. Both are set in `wrangler.jsonc` `vars` (`securityalerts@onlyjewishgirls.com` → `soc@onlyjewishgirls.com`).
+- Sent through the same Resend/Plunk transport as the other emails, after the response (`ctx.waitUntil`). The sender must be on a domain verified with the provider.
+- One email per (event, key) per 10 minutes; the rest are recorded as throttled and the next email says "+N more". Every alert, sent or not, is in the `security_alerts` table and the console.
+
+### Auto-blacklist
+
+Being on the allowlist does not exempt an address. When one address (default thresholds, all in Settings) gets 5 wrong passwords or 5 wrong two-step codes in 15 minutes, fails against 3 different accounts, makes 3 admin requests without permission, trips rate limits 3 times, reaches the hostile threat score (80), requests a scanner path (`/.env`, `/.git/`, `/wp-admin`, `/phpmyadmin`, `*.php`, …; rewritten to [`/api/decoy`](src/app/api/decoy/route.ts) by `next.config.ts`) or sends an injection/traversal pattern, then with no human step it is taken off the allowlist (the entry is kept, marked revoked), put on the deny list (`source='auto'`, reason and evidence), every session from it ends, the audit log records it and an alert goes out. Blocks are permanent unless Settings → Block duration says otherwise. `127.0.0.1`/`::1` are never blocked (local development and tests).
+
+If the address is the owner's own live session it is still blocked, and the alert subject starts with **OWNER LOCKOUT**. To get back in: unblock it from the console on another network, or
+
+```bash
+npx wrangler d1 execute onlyjewishgirls --remote --command "UPDATE ip_rules SET revoked_at = unixepoch() * 1000 WHERE kind = 'deny' AND ip = '203.0.113.7'"
+```
+
+## Admin panel (classic)
+
+`/admin/overview`, linked from the console. Anyone else gets a 404.
 
 **Roles.** `owner` (the site owner, set for briefchaimyuir@gmail.com by migration 3), `admin` and `member`. The owner can make members admins and back. Admins see everything and manage members, but can't act on other admins or the owner. Nobody can suspend, delete, demote, reset two-step sign-in or set a temporary password on their own account. The rules are in [`src/lib/admin/permissions.ts`](src/lib/admin/permissions.ts) and are enforced on the server.
 
@@ -131,7 +161,8 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 1. **Settings → Build → Build configuration:** set **Build command** to `npx opennextjs-cloudflare build`. Keep the default deploy (`npx wrangler deploy`) and preview commands. Workers Builds ignores the `build` section in `wrangler.jsonc`, which is only used by local `wrangler dev` / `wrangler deploy`.
 2. **Settings → Variables and Secrets:** add a secret `APP_SECRET`. Best is 32 random bytes (`openssl rand -base64 32`), but any random string of 16+ characters works, such as a UUID or a password manager's random password; it's hashed into a key. If it's missing or too short, the authenticator-app step says so on screen. Add it to the preview settings too if you use preview URLs. It encrypts authenticator-app secrets, so if it changes later, existing authenticator-app setups stop working.
 3. **Email (for forgot password):** in Resend, verify the domain `onlyjewishgirls.com` (it adds DNS records; with the domain on Cloudflare this is a couple of clicks). Then add a secret `EMAIL_API_KEY` with a Resend API key, and a variable `EMAIL_FROM`, e.g. `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`. Resend's free tier (100 emails a day, 3,000 a month) is plenty. For the backup, verify the same domain in Plunk and add a secret `PLUNK_API_KEY` with its secret key (`sk_…`). Dashboard variables survive deploys because `wrangler.jsonc` sets `keep_vars: true`; without it, each `wrangler deploy` would delete them.
-4. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
+4. **Security alerts:** `ALERTS_EMAIL_FROM` / `ALERTS_EMAIL_TO` are in `wrangler.jsonc`; set them in the dashboard too if you change them there. The sender (`securityalerts@onlyjewishgirls.com`) must be on the domain verified in Resend/Plunk, and `soc@onlyjewishgirls.com` must be a mailbox someone reads.
+5. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
 
 ## Layout
 
@@ -143,7 +174,9 @@ src/lib/admin/         admin roles/permissions, event labels, display helpers, v
 src/server/            D1 access + schema, sessions, password hashing, TOTP, WebAuthn, rate limits, email,
                        activity log (events.ts), admin queries and guards (admin.ts), undo (admin-undo.ts),
                        visitor log (visits.ts)
-src/app/api/           auth, MFA and admin endpoints, and /api/visit (page views from VisitTracker)
+src/app/api/           auth, MFA and admin endpoints, /api/console/* (Console kit), /api/decoy, and /api/visit
+src/server/console/    the Console kit's API over the server modules
+public/console/        the shared Console kit, vendored unchanged
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password,
                        /change-password, /home, /admin (overview, accounts, account, activity, visitors)
 tests/unit, tests/e2e  Vitest and Playwright

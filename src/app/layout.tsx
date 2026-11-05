@@ -39,9 +39,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
               {auth ? (
                 <>
                   {admin && (
-                    <Link href="/admin" className="btn-secondary">
+                    // The console is served by a route handler: a full page load, not client navigation.
+                    <a href="/admin" className="btn-secondary">
                       Admin
-                    </Link>
+                    </a>
                   )}
                   <SignOutButton />
                 </>

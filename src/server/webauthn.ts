@@ -78,6 +78,52 @@ export async function authenticationOptions(req: NextRequest, user: User, allow:
   });
 }
 
+export type PasskeyCheck = { ok: true; passkey: Passkey } | { ok: false; reason: string };
+
+/** Checks a passkey assertion and says exactly why it failed (PORTAL-STANDARD §2 `passkey_failed`). */
+export async function checkAuthentication(
+  req: NextRequest,
+  user: User,
+  response: AuthenticationResponseJSON,
+  challenge: string,
+  allow: (p: Passkey) => boolean = () => true,
+): Promise<PasskeyCheck> {
+  if (!response || typeof response.id !== "string") return { ok: false, reason: "The browser didn't send a passkey response." };
+  const passkey = await findPasskey(user.id, response.id);
+  if (!passkey) return { ok: false, reason: `That passkey is not registered on the account ${user.username}.` };
+  if (!allow(passkey)) return { ok: false, reason: "That passkey was added after this sign-in; use one you had before." };
+  return checkWithPasskey(req, passkey, response, challenge);
+}
+
+export async function checkWithPasskey(
+  req: NextRequest,
+  passkey: Passkey,
+  response: AuthenticationResponseJSON,
+  challenge: string,
+): Promise<PasskeyCheck> {
+  const { origin, rpID } = site(req);
+  try {
+    const { verified, authenticationInfo } = await verifyAuthenticationResponse({
+      response,
+      expectedChallenge: challenge,
+      expectedOrigin: origin,
+      expectedRPID: rpID,
+      credential: {
+        id: passkey.id,
+        publicKey: new Uint8Array(passkey.publicKey),
+        counter: passkey.counter,
+        transports: toTransports(passkey.transports),
+      },
+      requireUserVerification: true,
+    });
+    if (!verified) return { ok: false, reason: "The passkey's signature is invalid." };
+    await markPasskeyUsed(passkey.id, authenticationInfo.newCounter, Date.now());
+    return { ok: true, passkey };
+  } catch (error) {
+    return { ok: false, reason: `The passkey's signature is invalid: ${(error as Error).message}` };
+  }
+}
+
 export async function verifyAuthentication(
   req: NextRequest,
   user: User,
@@ -85,23 +131,10 @@ export async function verifyAuthentication(
   challenge: string,
   allow: (p: Passkey) => boolean = () => true,
 ) {
-  const passkey = await findPasskey(user.id, response.id);
-  if (!passkey || !allow(passkey)) return false;
-  const { origin, rpID } = site(req);
-  const { verified, authenticationInfo } = await verifyAuthenticationResponse({
-    response,
-    expectedChallenge: challenge,
-    expectedOrigin: origin,
-    expectedRPID: rpID,
-    credential: {
-      id: passkey.id,
-      publicKey: new Uint8Array(passkey.publicKey),
-      counter: passkey.counter,
-      transports: toTransports(passkey.transports),
-    },
-    requireUserVerification: true,
-  });
-  if (!verified) return false;
-  await markPasskeyUsed(passkey.id, authenticationInfo.newCounter, Date.now());
-  return true;
+  return (await checkAuthentication(req, user, response, challenge, allow)).ok;
+}
+
+/** Usernameless sign-in: any passkey on this site (discoverable credentials). */
+export async function discoverableOptions(req: NextRequest) {
+  return generateAuthenticationOptions({ rpID: site(req).rpID, allowCredentials: [], userVerification: "required" });
 }

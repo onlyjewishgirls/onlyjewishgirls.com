@@ -11,4 +11,7 @@ interface CloudflareEnv {
   EMAIL_FROM?: string;
   /** Base URL for links in emails, e.g. "https://onlyjewishgirls.com". Defaults to the request's origin. */
   PUBLIC_ORIGIN?: string;
+  /** Older names for the alert routing, read as a fallback (PORTAL-STANDARD §6). */
+  ALERT_EMAIL_FROM?: string;
+  ALERT_EMAIL_TO?: string;
 }

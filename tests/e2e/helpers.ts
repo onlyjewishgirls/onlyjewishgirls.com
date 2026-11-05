@@ -13,10 +13,12 @@ export function totp(secret: string, stepOffset = 0) {
   return hotp(base32Decode(secret), totpStep(Date.now()) + stepOffset);
 }
 
+const authenticators = new WeakMap<Page, { cdp: import("@playwright/test").CDPSession; id: string }>();
+
 export async function addVirtualAuthenticator(page: Page) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("WebAuthn.enable");
-  await cdp.send("WebAuthn.addVirtualAuthenticator", {
+  const { authenticatorId } = await cdp.send("WebAuthn.addVirtualAuthenticator", {
     options: {
       protocol: "ctap2",
       transport: "internal",
@@ -26,6 +28,16 @@ export async function addVirtualAuthenticator(page: Page) {
       automaticPresenceSimulation: true,
     },
   });
+  authenticators.set(page, { cdp, id: authenticatorId });
+}
+
+/**
+ * The verify screen starts the passkey prompt by itself (PORTAL-STANDARD §3). Turn the virtual
+ * authenticator's automatic "touch" off to test the other methods, and back on afterwards.
+ */
+export async function setPasskeyTouch(page: Page, enabled: boolean) {
+  const a = authenticators.get(page)!;
+  await a.cdp.send("WebAuthn.setAutomaticPresenceSimulation", { authenticatorId: a.id, enabled });
 }
 
 export async function signOut(page: Page) {
@@ -81,4 +93,20 @@ export function collectConsoleErrors(page: Page): string[] {
   });
   page.on("pageerror", (err) => errors.push(err.message));
   return errors;
+}
+
+/**
+ * Chrome's virtual authenticator answers passkey autofill (conditional UI) at once, so every visit
+ * to /login would sign straight in. Tests that type a password turn autofill off; the test for
+ * autofill itself turns it back on.
+ */
+export async function blockPasskeyAutofill(page: Page, blocked = true) {
+  const pattern = "**/api/auth/passkey/options";
+  if (!blocked) return page.unroute(pattern);
+  await page.route(pattern, (route) =>
+    // An empty answer makes the page's autofill give up quietly (an aborted request would log an error).
+    /"autofill":true/.test(route.request().postData() ?? "")
+      ? route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
+      : route.continue(),
+  );
 }

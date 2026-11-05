@@ -3,7 +3,9 @@ import Link from "next/link";
 import { ENDS_AFTER_SUNSET_MINUTES, STARTS_BEFORE_SUNSET_MINUTES, holyPeriods } from "@/lib/streak/calendar";
 import { AFTER_HOLY_DAY_HOURS, AT_RISK_HOURS, STREAK_WINDOW_HOURS } from "@/lib/streak/engine";
 import { requirePage } from "@/server/guards";
-import { checkIn } from "@/server/streak";
+import { checkIn, currentRestorePlan, restoreQuota } from "@/server/streak";
+import { findUserById } from "@/server/users";
+import { RestoreStreakButton } from "./RestoreStreakButton";
 import { StreakCard } from "./StreakCard";
 
 export const metadata: Metadata = { title: "Home · OnlyJewishGirls" };
@@ -13,6 +15,11 @@ const DAY = 86_400_000;
 export default async function HomePage() {
   const { user } = await requirePage("/home");
   const { status, today, place, now } = await checkIn(user);
+  // Courtesy restore (PORTAL-STANDARD §4): offered whenever restorePlan() finds something to put back.
+  const fresh = (await findUserById(user.id)) ?? user;
+  const plan = currentRestorePlan(fresh, now);
+  const quota = plan ? await restoreQuota(user.id, now) : null;
+  const allowance = quota ? (quota.perMonth === 0 ? quota.extra : quota.perMonth + quota.extra) : 0;
   const next = holyPeriods(place, now, now + 8 * DAY).find((p) => p.end > now);
   const at = (instant: number) =>
     new Date(instant).toLocaleString("en-US", {
@@ -34,10 +41,20 @@ export default async function HomePage() {
         deadline={status.deadline}
         leeway={status.leeway.map(({ names }) => ({ names }))}
         graceHours={AFTER_HOLY_DAY_HOURS}
-        today={today && { outcome: today.outcome, added: today.added, previousCount: today.previousCount }}
+        today={
+          fresh.streakLastEvent?.restored
+            ? { outcome: "restored", added: 0, previousCount: fresh.streakLastEvent.previousCount }
+            : today && { outcome: today.outcome, added: today.added, previousCount: today.previousCount }
+        }
         serverNow={now}
         atRiskMs={AT_RISK_HOURS * 3_600_000}
       />
+
+      {plan && quota && allowance > 0 && (
+        <section className="card">
+          <RestoreStreakButton to={plan.to} left={quota.left} allowance={allowance} />
+        </section>
+      )}
 
       <section className="card space-y-3">
         <h2 className="text-lg font-semibold">How your 🔥 streak works</h2>

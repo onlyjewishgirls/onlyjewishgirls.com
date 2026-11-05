@@ -39,3 +39,16 @@ export function isLocalHost(host: string): boolean {
 export async function requestHost(): Promise<string> {
   return (await headers()).get("host") ?? "";
 }
+
+/**
+ * Runs after the response is sent (Cloudflare `ctx.waitUntil`), so slow or failing side work
+ * such as alert emails never slows or breaks the request.
+ */
+export function inBackground(task: Promise<unknown>) {
+  const safe = task.catch((error) => console.error("Background task failed:", error));
+  try {
+    getCloudflareContext().ctx.waitUntil(safe);
+  } catch {
+    void safe;
+  }
+}

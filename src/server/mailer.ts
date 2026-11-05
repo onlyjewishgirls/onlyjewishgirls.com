@@ -46,21 +46,31 @@ export function emailConfigured(): boolean {
   return Boolean((EMAIL_API_KEY || PLUNK_API_KEY) && EMAIL_FROM);
 }
 
+export interface Delivery {
+  ok: boolean;
+  /** The provider that accepted it, or that failed last. */
+  provider: string | null;
+  error: string | null;
+}
+
 /**
  * Sends through Resend (the same service the employees portal uses), with Plunk as the backup
  * when Resend fails. Needs the EMAIL_API_KEY and/or PLUNK_API_KEY secret and the EMAIL_FROM
- * variable on the Worker. Without them, local development prints the email to the terminal instead.
+ * variable on the Worker (or a `from` passed in, as security alerts do). Without them, local
+ * development prints the email to the terminal instead.
  */
-export async function sendEmail(email: Email, { local }: { local: boolean }): Promise<boolean> {
-  const { EMAIL_FROM: from } = cfEnv();
-  if (!emailConfigured() || !from) {
+export async function deliverEmail(email: Email, { local, from: fromOverride }: { local: boolean; from?: string }): Promise<Delivery> {
+  const from = fromOverride || cfEnv().EMAIL_FROM;
+  const { EMAIL_API_KEY, PLUNK_API_KEY } = cfEnv();
+  if (!(EMAIL_API_KEY || PLUNK_API_KEY) || !from) {
     if (local) {
-      console.log(`\n[email not configured — would send]\nTo: ${email.to}\nSubject: ${email.subject}\n\n${email.text}\n`);
+      console.log(`\n[email not configured — would send]\nFrom: ${from ?? "(EMAIL_FROM not set)"}\nTo: ${email.to}\nSubject: ${email.subject}\n\n${email.text}\n`);
     } else {
       console.error("Email is not configured: set the EMAIL_API_KEY or PLUNK_API_KEY secret and EMAIL_FROM variable on the Worker.");
     }
-    return false;
+    return { ok: false, provider: null, error: "Email is not configured (no EMAIL_API_KEY / PLUNK_API_KEY, or no sender)." };
   }
+  let last: Delivery = { ok: false, provider: null, error: "No email provider is configured." };
   for (const provider of providers(email, from)) {
     try {
       const res = await fetch(provider.url, {
@@ -69,16 +79,23 @@ export async function sendEmail(email: Email, { local }: { local: boolean }): Pr
         body: JSON.stringify(provider.body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
       });
-      if (res.ok) return true;
-      console.error(`Email to ${email.to} via ${provider.name} failed: ${res.status} ${(await res.text()).slice(0, 300)}`);
+      if (res.ok) return { ok: true, provider: provider.name, error: null };
+      const text = (await res.text()).slice(0, 300);
+      console.error(`Email to ${email.to} via ${provider.name} failed: ${res.status} ${text}`);
+      last = { ok: false, provider: provider.name, error: `${provider.name} answered ${res.status}: ${text}` };
     } catch (error) {
       console.error(`Email to ${email.to} via ${provider.name} failed:`, (error as Error).message);
+      last = { ok: false, provider: provider.name, error: `${provider.name}: ${(error as Error).message}` };
     }
   }
-  return false;
+  return last;
 }
 
-const escapeHtml = (value: string) =>
+export async function sendEmail(email: Email, options: { local: boolean; from?: string }): Promise<boolean> {
+  return (await deliverEmail(email, options)).ok;
+}
+
+export const escapeHtml = (value: string) =>
   value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** A plain, readable HTML version of a short message with an optional button. */

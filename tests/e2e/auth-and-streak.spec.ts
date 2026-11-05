@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
-import { addVirtualAuthenticator, screenshot, signIn, signOut, sql, totp } from "./helpers";
+import { addVirtualAuthenticator, blockPasskeyAutofill, query, screenshot, setPasskeyTouch, signIn, signOut, sql, totp } from "./helpers";
 
 const user = {
   firstName: "Chaya",
@@ -21,6 +21,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
   });
   page.on("pageerror", (err) => consoleErrors.push(err.message));
   await addVirtualAuthenticator(page);
+  await blockPasskeyAutofill(page);
   let secret = "";
   let recoveryCodes: string[] = [];
 
@@ -98,26 +99,53 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await screenshot(page, "3-home-streak");
   });
 
-  await test.step("wrong password is rejected without saying which part was wrong", async () => {
+  await test.step("both fields on the first screen, with passkey autofill (§1)", async () => {
     await signOut(page);
-    await signIn(page, user.username, "Xq7#Rv!Kz9Wm$Pd3");
-    await expect(page.getByText("Incorrect username/email or password.")).toBeVisible();
+    await page.goto("/login");
+    await expect(page.getByLabel("Username or email")).toHaveAttribute("autocomplete", "username webauthn");
+    await expect(page.getByLabel("Password", { exact: true })).toHaveAttribute("autocomplete", "current-password");
+    await expect(page.getByRole("button", { name: "Sign in with a passkey" })).toBeVisible();
+    await screenshot(page, "1b-login");
+    // Autofill on: the browser offers the passkey in the username field and it signs straight in.
+    await blockPasskeyAutofill(page, false);
+    await page.reload();
+    await expect(page).toHaveURL("/home");
+    await blockPasskeyAutofill(page);
+    await signOut(page);
   });
 
-  await test.step("sign in with password + passkey", async () => {
+  await test.step("errors are exact and shown under the field (§2)", async () => {
+    await signIn(page, "no_such_person", "Xq7#Rv!Kz9Wm$Pd3");
+    await expect(page.getByTestId("identifier-error")).toHaveText('No account exists with the username or email "no_such_person".');
+    await signIn(page, user.username, "Xq7#Rv!Kz9Wm$Pd3");
+    await expect(page.getByTestId("password-error")).toHaveText(`Incorrect password for ${user.username}. 9 attempts left before the account locks.`);
+  });
+
+  await test.step("sign in with password + passkey: the passkey prompt starts by itself (§3)", async () => {
     await signIn(page, user.username, user.password);
-    await expect(page).toHaveURL("/login/verify");
-    await page.goto("/home");
-    await expect(page).toHaveURL("/login/verify"); // password alone isn't enough
-    await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
     await expect(page.getByTestId("streak-banner")).toContainText("Your streak has started");
   });
 
-  await test.step("sign in with password + authenticator code", async () => {
+  await test.step("sign in with a passkey alone (usernameless)", async () => {
     await signOut(page);
+    await page.goto("/login");
+    await page.getByRole("button", { name: "Sign in with a passkey" }).click();
+    await expect(page).toHaveURL("/home");
+  });
+
+  await test.step("sign in with password + authenticator code; methods listed passkey, app, recovery", async () => {
+    await signOut(page);
+    await setPasskeyTouch(page, false);
     await signIn(page, user.email, user.password);
-    await page.getByRole("button", { name: "Use my authenticator app" }).click();
+    await expect(page).toHaveURL("/login/verify");
+    await page.goto("/home");
+    await expect(page).toHaveURL("/login/verify"); // password alone isn't enough
+    await expect(page.getByTestId("mfa-methods").locator("li")).toHaveText([/^Passkey/, /^Authenticator app/, /^Recovery code/]);
+    await page.getByRole("button", { name: "Authenticator app" }).click();
+    await page.getByLabel(/6-digit code/).fill("000000");
+    await page.getByRole("button", { name: "Verify" }).click();
+    await expect(page.getByText(/^That code is incorrect\. 4 tries left on this sign-in\./)).toBeVisible();
     // The setup code can't be replayed; the next one works.
     await page.getByLabel(/6-digit code/).fill(totp(secret, 1));
     await page.getByRole("button", { name: "Verify" }).click();
@@ -127,18 +155,19 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
   await test.step("sign in with password + recovery code, which then stops working", async () => {
     await signOut(page);
     await signIn(page, user.username, user.password);
-    await page.getByRole("button", { name: "Use a recovery code" }).click();
+    await page.getByRole("button", { name: "Recovery code" }).click();
     await page.getByLabel("Recovery code").fill(recoveryCodes[0].toLowerCase());
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page).toHaveURL("/home");
 
     await signOut(page);
     await signIn(page, user.username, user.password);
-    await page.getByRole("button", { name: "Use a recovery code" }).click();
+    await page.getByRole("button", { name: "Recovery code" }).click();
     await page.getByLabel("Recovery code").fill(recoveryCodes[0]);
     await page.getByRole("button", { name: "Verify" }).click();
-    await expect(page.getByText("isn't valid or was already used")).toBeVisible();
-    await page.getByRole("button", { name: "Use a passkey" }).click();
+    await expect(page.getByText(/^That recovery code was already used\. Each one works once\./)).toBeVisible();
+    await setPasskeyTouch(page, true);
+    await page.getByRole("button", { name: "Passkey" }).click();
     await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
   });
@@ -166,12 +195,25 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page.getByText("Longest streak: 6")).toBeVisible();
   });
 
+  await test.step("a lost streak can be restored, 3 times a month (§4)", async () => {
+    const restore = page.getByRole("button", { name: "Restore my streak (3 of 3 left this month)" });
+    await expect(restore).toBeVisible();
+    await screenshot(page, "3b-restore");
+    await restore.click();
+    // The button goes away once there's nothing left to restore; the streak and banner show the result.
+    await expect(page.getByTestId("streak-count")).toHaveText("7");
+    await expect(page.getByTestId("streak-banner")).toContainText("Your 6-day streak is restored");
+    await page.reload();
+    await expect(page.getByTestId("restore-streak")).toHaveCount(0);
+    expect(query<{ kind: string; to_count: number }>(`SELECT kind, to_count FROM streak_restores WHERE user_id = (SELECT id FROM users WHERE username = '${user.username}')`)).toEqual([{ kind: "self", to_count: 7 }]);
+  });
+
   await test.step("forgot password: the emailed link works once, signs out everywhere, and MFA still applies", async () => {
     // Still signed in from the previous step.
     await page.goto("/forgot-password");
     await page.getByLabel("Username or email").fill(user.email);
     await page.getByRole("button", { name: "Email me a reset link" }).click();
-    await expect(page.getByText("If that account exists, we've emailed a link")).toBeVisible();
+    await expect(page.getByText(`We emailed a reset link for ${user.username} to ch•••@example.com.`)).toBeVisible();
 
     // The real token only exists in the email, so plant one we know.
     const token = `e2e-${Date.now()}`;
@@ -211,10 +253,8 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page.getByRole("heading", { name: "Link expired" })).toBeVisible();
 
     await signIn(page, user.username, user.password);
-    await expect(page.getByText("Incorrect username/email or password.")).toBeVisible();
+    await expect(page.getByTestId("password-error")).toContainText(`Incorrect password for ${user.username}.`);
     await signIn(page, user.username, newPassword);
-    await expect(page).toHaveURL("/login/verify");
-    await page.getByRole("button", { name: /Use my passkey/ }).click();
     await expect(page).toHaveURL("/home");
   });
 
@@ -246,7 +286,7 @@ test("usernames and emails must be unique", async ({ request }) => {
   expect(body.fields.email).toBe("An account with this email already exists");
 });
 
-test("forgot password gives the same answer whether or not the account exists", async ({ request }) => {
+test("forgot password says exactly what happened (no enumeration policy, §2)", async ({ request }) => {
   const headers = { Origin: "http://localhost:3100" };
   const password = "Gv6!Mz#Rt2Kw&Jp8";
   await request.post("/api/auth/register", {
@@ -270,8 +310,8 @@ test("forgot password gives the same answer whether or not the account exists", 
   };
   const real = await ask("leah@example.com");
   expect(real.status).toBe(200);
-  expect(await ask("nobody@example.com")).toEqual(real);
-  expect(await ask("no_such_user")).toEqual(real);
+  expect(real.body.message).toMatch(/^We emailed a reset link for leah_k to le•••@example\.com\./);
+  expect((await ask("nobody@example.com")).body).toMatchObject({ code: "no_account", field: "identifier", error: 'No account exists with the username or email "nobody@example.com".' });
 
   const reset = await request.post("/api/auth/reset-password", {
     headers,

@@ -16,3 +16,8 @@ APP_SECRET=
 
 # Optional. Base URL for links in emails. Defaults to the address the request came in on.
 # PUBLIC_ORIGIN=https://onlyjewishgirls.com
+
+# Security alert emails (PORTAL-STANDARD §6). Production values are in wrangler.jsonc `vars`;
+# unset, they default to securityalerts@ / soc@ the site's domain.
+# ALERTS_EMAIL_FROM=securityalerts@onlyjewishgirls.com
+# ALERTS_EMAIL_TO=soc@onlyjewishgirls.com

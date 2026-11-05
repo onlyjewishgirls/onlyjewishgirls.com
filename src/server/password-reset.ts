@@ -1,10 +1,9 @@
 import "server-only";
-import { getCloudflareContext } from "@opennextjs/cloudflare";
 import type { NextRequest } from "next/server";
 import { checkPassword } from "@/lib/password/policy";
 import { randomToken, sha256 } from "./crypto";
 import { getDictionary } from "./dictionary";
-import { APP_NAME, cfEnv, isLocalHost } from "./env";
+import { APP_NAME, cfEnv, inBackground, isLocalHost } from "./env";
 import { sendEmail, simpleHtml } from "./mailer";
 import { createPasswordReset, findPasswordResetUser, type User } from "./users";
 
@@ -39,14 +38,6 @@ function siteOrigin(req: NextRequest): string {
   return (cfEnv().PUBLIC_ORIGIN ?? new URL(req.url).origin).replace(/\/$/, "");
 }
 
-/** Runs after the response is sent, so timing doesn't reveal whether the account exists. */
-function inBackground(task: Promise<unknown>) {
-  try {
-    getCloudflareContext().ctx.waitUntil(task);
-  } catch {
-    void task;
-  }
-}
 
 export async function sendPasswordResetEmail(req: NextRequest, user: User, now = Date.now()) {
   const token = randomToken();

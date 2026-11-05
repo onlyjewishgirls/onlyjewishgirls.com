@@ -148,4 +148,105 @@ export const MIGRATIONS: string[][] = [
     // One index only: D1 bills each index as another row written, and this table gets a row per page view.
     `CREATE INDEX IF NOT EXISTS visits_at ON visits(at)`,
   ],
+  [
+    // Portal standard (PORTAL-STANDARD.md): settings, streak restores, IP allow/deny lists,
+    // suspicious-activity strikes and the security-alert log.
+    `CREATE TABLE IF NOT EXISTS settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,                    -- JSON
+      updated_at INTEGER NOT NULL,
+      updated_by TEXT
+    )`,
+    // Extra console permissions on top of the role, e.g. ["streaks.manage"] (JSON array).
+    "ALTER TABLE users ADD COLUMN permissions TEXT",
+    // An administrator's lock (separate from the automatic wrong-password lockout). NULL = not locked;
+    // a far-future time = locked until unlocked.
+    "ALTER TABLE users ADD COLUMN locked_until INTEGER",
+    "ALTER TABLE users ADD COLUMN locked_reason TEXT",
+    `CREATE TABLE IF NOT EXISTS streak_restores (
+      id          INTEGER PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      kind        TEXT NOT NULL CHECK (kind IN ('self', 'admin', 'grant')),
+      from_count  INTEGER NOT NULL,
+      to_count    INTEGER NOT NULL,
+      month       TEXT NOT NULL,                   -- "YYYY-MM" in the portal time zone
+      created_at  INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS streak_restores_user_month ON streak_restores(user_id, month)`,
+    `CREATE TABLE IF NOT EXISTS streak_restore_grants (
+      user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      month    TEXT NOT NULL,
+      extra    INTEGER NOT NULL,
+      PRIMARY KEY (user_id, month)
+    )`,
+    `CREATE TABLE IF NOT EXISTS ip_rules (
+      id              INTEGER PRIMARY KEY,
+      kind            TEXT NOT NULL CHECK (kind IN ('allow', 'deny')),
+      ip              TEXT NOT NULL,               -- an address or a CIDR range
+      label           TEXT,
+      source          TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'auto')),
+      reason          TEXT,
+      trigger_kind    TEXT,                        -- auto blocks: what tripped it
+      evidence        TEXT,                        -- JSON array of strings
+      was_allowlisted INTEGER NOT NULL DEFAULT 0,
+      owner_session   INTEGER NOT NULL DEFAULT 0,
+      sessions_killed INTEGER NOT NULL DEFAULT 0,
+      hits            INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      expires_at      INTEGER,                     -- NULL = permanent
+      revoked_at      INTEGER,
+      revoked_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      revoked_reason  TEXT
+    )`,
+    `CREATE INDEX IF NOT EXISTS ip_rules_kind ON ip_rules(kind, revoked_at)`,
+    `CREATE TABLE IF NOT EXISTS ip_strikes (
+      id       INTEGER PRIMARY KEY,
+      ip       TEXT NOT NULL,
+      kind     TEXT NOT NULL,                      -- failed_password, failed_mfa, admin_denied, rate_limit, decoy, injection
+      subject  TEXT,                               -- account id (or hashed name) or path
+      at       INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS ip_strikes_ip_at ON ip_strikes(ip, at)`,
+    `CREATE TABLE IF NOT EXISTS security_alerts (
+      id            INTEGER PRIMARY KEY,
+      at            INTEGER NOT NULL,
+      event         TEXT NOT NULL,
+      dedupe_key    TEXT NOT NULL,
+      subject       TEXT NOT NULL,
+      to_addr       TEXT NOT NULL,
+      from_addr     TEXT NOT NULL,
+      status        TEXT NOT NULL,                 -- queued, sent, throttled, failed
+      provider      TEXT,
+      error         TEXT,
+      suppressed    INTEGER NOT NULL DEFAULT 0,    -- earlier throttled alerts folded into this one
+      ip            TEXT,
+      user_id       INTEGER,
+      username      TEXT,
+      audit_id      INTEGER,
+      owner_lockout INTEGER NOT NULL DEFAULT 0
+    )`,
+    `CREATE INDEX IF NOT EXISTS security_alerts_key_at ON security_alerts(event, dedupe_key, at)`,
+    `CREATE INDEX IF NOT EXISTS security_alerts_at ON security_alerts(at)`,
+    // Single-use challenges for "Sign in with a passkey" (no session exists yet).
+    `CREATE TABLE IF NOT EXISTS webauthn_challenges (
+      challenge  TEXT PRIMARY KEY,
+      expires_at INTEGER NOT NULL
+    )`,
+  ],
+  [
+    // Email codes (PORTAL-STANDARD §3: passkey, authenticator app, email). On per person by default;
+    // only offered when email is configured (see email-otp.ts).
+    "ALTER TABLE users ADD COLUMN email_otp_enabled INTEGER NOT NULL DEFAULT 1",
+    `CREATE TABLE IF NOT EXISTS email_codes (
+      id          INTEGER PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      code_hash   TEXT NOT NULL,                   -- SHA-256 of the code with the account id
+      created_at  INTEGER NOT NULL,
+      expires_at  INTEGER NOT NULL,
+      used_at     INTEGER
+    )`,
+    `CREATE INDEX IF NOT EXISTS email_codes_user ON email_codes(user_id, created_at)`,
+  ],
 ];
