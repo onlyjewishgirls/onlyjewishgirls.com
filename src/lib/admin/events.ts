@@ -10,6 +10,7 @@ export const EVENT_LABELS = {
   "signin.locked": "Blocked: account is locked by an administrator",
   "signin.ip_blocked": "Blocked: IP address is on the deny list",
   "signin.ip_not_allowed": "Blocked: IP address is not on the allowlist",
+  "signin.country_blocked": "Blocked: country not allowed (country rule)",
   "signin.new_device": "Signed in from a new device, IP or country",
   "signin.complete": "Signed in",
   "signin.mfa_failed": "Failed two-step verification",
@@ -62,6 +63,7 @@ export const EVENT_LABELS = {
   "admin.ip_deny_add": "Blocked an IP address",
   "admin.ip_deny_update": "Edited a deny-list entry",
   "admin.ip_unblock": "Unblocked an IP address",
+  "admin.country_rule": "Changed the country rule",
   "security.admin_denied": "Refused: admin area without permission",
   "security.auto_blocked": "IP auto-blacklisted",
   "security.auto_block_skipped": "Would have auto-blacklisted (local address)",
@@ -107,6 +109,7 @@ export function isWarningEvent(type: string): boolean {
     type.startsWith("security.") ||
     type === "signin.ip_blocked" ||
     type === "signin.ip_not_allowed" ||
+    type === "signin.country_blocked" ||
     type === "signin.locked"
   );
 }

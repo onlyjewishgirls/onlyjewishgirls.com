@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { findInjection, formatDuration } from "@/lib/security";
 import { ConfigError } from "./app-secret";
 import { logEvent } from "./events";
+import { checkCountry, countryGuardedPath, recordCountryRefusal } from "./country-rule";
 import { denyingRule } from "./ip-rules";
 import { recordStrike } from "./threat";
 
@@ -108,6 +109,13 @@ export function api(handler: Handler): Handler {
       const ip = clientIp(req);
       const denied = await denyingRule(ip);
       if (denied) return fail(403, "ip_blocked", ipBlockedMessage(ip, denied));
+      if (countryGuardedPath(req.nextUrl.pathname)) {
+        const country = await checkCountry(ip);
+        if (!country.ok) {
+          await recordCountryRefusal(country, req.nextUrl.pathname);
+          return fail(403, "country_blocked", country.message);
+        }
+      }
       let body: Record<string, unknown> | undefined;
       try {
         const text = await req.clone().text();

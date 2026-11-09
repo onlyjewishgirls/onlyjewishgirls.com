@@ -70,6 +70,28 @@ test("the admin console is the Console kit, with this site's features", async ({
       .toEqual(["failed"]);
   });
 
+  await test.step("the country rule is the Countries part of the IP allowlist page (§9)", async () => {
+    await page.goto("/admin#ips");
+    await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();
+    await expect(page.getByText(/No rule|no rule|off/i).first()).toBeVisible();
+    const res = await page.request.put("/api/console/country-rule", {
+      headers: { "X-Requested-With": "console", Origin: "http://localhost:3100" },
+      data: { mode: "allow", countries: ["US", "CA", "IL"] },
+    });
+    // wrangler dev's local request has a country; whichever it is, the answer is either saved or an exact self_lockout.
+    const body = await res.json();
+    expect(body.ok === true || body.code === "self_lockout").toBe(true);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/admin#ips");
+    await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();
+    await screenshot(page, "console-4-countries");
+    // Leave no rule behind for later steps.
+    await page.request.put("/api/console/country-rule", {
+      headers: { "X-Requested-With": "console", Origin: "http://localhost:3100" },
+      data: { mode: "off", countries: [] },
+    });
+  });
+
   await test.step("phone width: the sidebar becomes a drawer and nothing scrolls sideways", async () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/admin#overview");

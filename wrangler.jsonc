@@ -35,13 +35,13 @@
   // EMAIL_FROM and other plain variables are managed in the dashboard. Without this,
   // every `wrangler deploy` deletes them (secrets are always kept).
   "keep_vars": true,
-  // "resend" or "plunk": which email provider goes first (src/server/mailer.ts). The other is
-  // the backup when it fails; with only one key (EMAIL_API_KEY / PLUNK_API_KEY secrets) set,
-  // that one is used alone.
+  // Mail (PORTAL-STANDARD §8): Plunk (PLUNK_API_KEY secret) is the primary; Resend (EMAIL_API_KEY) is
+  // the fallback when both are set. PLUNK_API_KEY alone is a complete set-up (EMAIL_FROM defaults to
+  // no-reply@onlyjewishgirls.com). EMAIL_PRIMARY "resend" would put Resend first.
   // ALERTS_EMAIL_FROM / ALERTS_EMAIL_TO: where security alert emails come from and go to
   // (PORTAL-STANDARD §6; src/server/alerts.ts). The sender must be on a domain verified in Resend/Plunk.
   "vars": {
-    "EMAIL_PRIMARY": "resend",
+    "EMAIL_PRIMARY": "plunk",
     "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",
     "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com"
   },

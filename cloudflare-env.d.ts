@@ -5,7 +5,7 @@ interface __BaseEnv_CloudflareEnv {
 	DB: D1Database;
 	ASSETS: Fetcher;
 	APP_SECRET: string;
-	EMAIL_PRIMARY: "resend";
+	EMAIL_PRIMARY: "plunk";
 	ALERTS_EMAIL_FROM: "securityalerts@onlyjewishgirls.com";
 	ALERTS_EMAIL_TO: "soc@onlyjewishgirls.com";
 }

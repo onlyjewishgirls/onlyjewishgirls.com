@@ -55,6 +55,8 @@ const ALERTS: Partial<Record<EventType, AlertEvent>> = {
   "admin.ip_deny_add": "ip_list_changed",
   "admin.ip_deny_update": "ip_list_changed",
   "admin.ip_unblock": "ip_list_changed",
+  "admin.country_rule": "ip_list_changed",
+  "signin.country_blocked": "country_blocked",
   "security.decoy": "decoy_hit",
   "security.admin_denied": "admin_access_denied",
   "admin.set_streak": "streak_set",
@@ -64,6 +66,8 @@ const ALERTS: Partial<Record<EventType, AlertEvent>> = {
 
 /** Failed sign-ins dedupe per account + IP; everything else per account (or IP when there's none). */
 function dedupeKey(type: EventType, e: Logged, ip: string | null): string {
+  // One alert per refused country per 10 minutes (PORTAL-STANDARD §9).
+  if (type === "signin.country_blocked") return `country:${String(e.detail?.country ?? "?")}`;
   const who = e.user ? `u${e.user.id}` : typeof e.detail?.identifier === "string" ? `name:${e.detail.identifier}` : "-";
   if (type === "signin.failed" || type === "signin.unknown" || type === "signin.mfa_failed") return `${who}:${ip ?? "-"}`;
   if (type.startsWith("admin.ip_") || type.startsWith("security.")) return ip ?? who;

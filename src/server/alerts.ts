@@ -25,6 +25,7 @@ export type AlertEvent =
   | "hostile_visitor"
   | "decoy_hit"
   | "admin_access_denied"
+  | "country_blocked"
   | "streak_set"
   | "settings_changed"
   | "test";

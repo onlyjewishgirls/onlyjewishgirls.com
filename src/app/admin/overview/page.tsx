@@ -5,7 +5,7 @@ import { EventList } from "@/components/admin/EventList";
 import { StatTile } from "@/components/admin/StatTile";
 import { compactNumber, fullName } from "@/lib/admin/format";
 import { dashboardStats, requireAdminPage } from "@/server/admin";
-import { cfEnv } from "@/server/env";
+import { emailConfigured } from "@/server/mailer";
 import { visitsToday } from "@/server/visits";
 
 export const metadata: Metadata = { title: "Admin · OnlyJewishGirls", robots: { index: false } };
@@ -13,12 +13,11 @@ export const metadata: Metadata = { title: "Admin · OnlyJewishGirls", robots: {
 export default async function AdminOverviewPage() {
   const { user, now } = await requireAdminPage();
   const [stats, visits] = await Promise.all([dashboardStats(user.timeZone, now), visitsToday(now)]);
-  const env = cfEnv();
 
   const incomplete = stats.totalUsers - stats.twoStepComplete;
   const warnings: { text: string; href?: string }[] = [];
-  if (!(env.EMAIL_API_KEY || env.PLUNK_API_KEY) || !env.EMAIL_FROM) {
-    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add EMAIL_API_KEY or PLUNK_API_KEY, and EMAIL_FROM, to the Worker." });
+  if (!emailConfigured()) {
+    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add the PLUNK_API_KEY secret to the Worker." });
   }
   if (stats.lockedNow > 0) {
     warnings.push({

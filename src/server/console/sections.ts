@@ -8,7 +8,9 @@ import { currentRouting } from "../alerts";
 import { all, first, run, type Param } from "../db";
 import { APP_NAME } from "../env";
 import { logEvent } from "../events";
-import { addRule, findRule, isLive, listRules, matchingRules, revokeRule, updateRule, type IpRule } from "../ip-rules";
+import { COUNTRY_PRESETS, countryName, countryRefused, parseCountryRule, type CountryRule } from "@/lib/country-rule";
+import { getCountryRule, requestCountry, saveCountryRule } from "../country-rule";
+import { addRule, findRule, isAllowlisted, isLive, listRules, matchingRules, revokeRule, updateRule, type IpRule } from "../ip-rules";
 import { emailConfigured } from "../mailer";
 import { listSessions } from "../session";
 import { getSettings, saveSettings } from "../settings";
@@ -33,7 +35,7 @@ export const FEATURES = {
   security: true,
   ip_allowlist: true,
   deny_list: true,
-  country_rule: false, // no country gate on this site
+  country_rule: true, // PORTAL-STANDARD §9: "Countries" on the IP allowlist page
   devices: false, // no trusted-device model; sessions carry the device
   sessions: true,
   audit: true,
@@ -56,7 +58,7 @@ export const FEATURES = {
   ip_link_person: false,
   deny_auto: true,
   deny_expiry: true,
-  country_deny_mode: false,
+  country_deny_mode: true,
   device_approval: false,
   device_block: false,
   visitors_detail: true,
@@ -72,7 +74,7 @@ export async function bootstrap(ctx: ConsoleCtx) {
   const me = ctx.me;
   const banners: string[] = [];
   if (!settings.auto_block_enabled) banners.push("Auto-blacklisting is OFF: suspicious IPs are reported but not blocked.");
-  if (!emailConfigured()) banners.push("Email isn't configured, so security alerts are recorded but not delivered.");
+  if (!emailConfigured()) banners.push("Email isn't configured (PLUNK_API_KEY isn't set), so security alerts are recorded but not delivered.");
   const pending = await first<{ deny: number }>(
     "SELECT COUNT(*) AS deny FROM ip_rules WHERE kind = 'deny' AND source = 'auto' AND revoked_at IS NULL AND created_at >= ?",
     ctx.now - DAY,
@@ -170,7 +172,7 @@ export async function overview(ctx: ConsoleCtx) {
   posture.push(
     emailConfigured()
       ? { severity: "ok", title: "Email is configured; security alerts are delivered." }
-      : { severity: "danger", title: "Email isn't configured.", detail: "Alerts are recorded but not sent. Set EMAIL_API_KEY or PLUNK_API_KEY and EMAIL_FROM." },
+      : { severity: "danger", title: "Email isn't configured.", detail: "Alerts are recorded but not sent. Set the PLUNK_API_KEY secret on the Worker." },
   );
   posture.push(
     settings.auto_block_enabled
@@ -191,6 +193,16 @@ export async function overview(ctx: ConsoleCtx) {
     settings.allowlist_mode === "off"
       ? { severity: "ok", title: "The IP allowlist marks trusted addresses; it isn't enforced.", href: "#settings" }
       : { severity: "ok", title: `The IP allowlist is enforced for ${settings.allowlist_mode === "admins" ? "admins" : "everyone"}.` },
+  );
+  const countries = await getCountryRule();
+  posture.push(
+    countries.mode === "off" || countries.countries.length === 0
+      ? { severity: "ok", title: "No country rule: sign-in is open from every country.", href: "#ips" }
+      : {
+          severity: "ok",
+          title: `Country rule: sign-in ${countries.mode === "allow" ? "only from" : "refused from"} ${countries.countries.join(", ")}.`,
+          href: "#ips",
+        },
   );
   const routing = currentRouting(ctx.req.nextUrl.host);
   posture.push({ severity: "ok", title: `Alerts go from ${routing.from} to ${routing.to}.` });
@@ -774,4 +786,51 @@ export async function sessions(ctx: ConsoleCtx) {
 
 export async function deleteSessionRoute(ctx: ConsoleCtx) {
   return revokeOneSession(ctx, ctx.params.id);
+}
+
+// ---- Country rule (PORTAL-STANDARD §9; shown as "Countries" on the IP allowlist page) ----
+
+function describeRule(r: CountryRule): string {
+  if (r.mode === "off" || r.countries.length === 0) return "no rule";
+  return `${r.mode === "allow" ? "only" : "all but"} ${r.countries.join(", ")}`;
+}
+
+export async function getCountryRuleRoute(ctx: ConsoleCtx) {
+  need(ctx, "ips.view");
+  const rule = await getCountryRule();
+  return json({
+    mode: rule.mode,
+    countries: rule.countries,
+    modes: ["off", "allow", "deny"],
+    presets: COUNTRY_PRESETS,
+    notes: [
+      "Applies to sign-in, account pages, the admin console and their APIs. The public pages stay open to everyone.",
+      "Never overrides the IP allowlist: an allowlisted address is never refused for its country.",
+      "An unknown country (no data, XX, or Tor) is never blocked. An empty list means no rule, never \"allow nobody\".",
+      "Refused visitors are told exactly why, and each refused country sends at most one alert per 10 minutes.",
+    ],
+    your_country: await requestCountry(),
+    can_manage: ctx.caps.has("ips.manage"),
+  });
+}
+
+export async function putCountryRule(ctx: ConsoleCtx) {
+  need(ctx, "ips.manage");
+  const parsed = parseCountryRule(ctx.body);
+  if (!parsed.ok) throw err(400, "validation", parsed.error, { field: parsed.field });
+  const rule = parsed.rule;
+  const mine = await requestCountry();
+  if (mine && countryRefused(rule, mine) && !(await isAllowlisted(ctx.ip))) {
+    throw err(
+      400,
+      "self_lockout",
+      `This rule would refuse your own country, ${countryName(mine)} (${mine}), and your address ${ctx.ip} isn't on the IP allowlist. Add your address to the allowlist first, or include ${mine}.`,
+    );
+  }
+  const before = await getCountryRule();
+  await saveCountryRule(rule, ctx.me.username, ctx.now);
+  if (describeRule(before) !== describeRule(rule) || before.mode !== rule.mode) {
+    await logEvent("admin.country_rule", { actor: ctx.me, user: ctx.me, detail: { from: describeRule(before), to: describeRule(rule) }, now: ctx.now });
+  }
+  return json({ mode: rule.mode, countries: rule.countries });
 }

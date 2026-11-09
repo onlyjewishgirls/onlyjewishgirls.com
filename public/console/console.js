@@ -374,6 +374,19 @@
     b.className = 'cx-banner' + (tone && tone !== 'danger' ? ' t-' + tone : '');
     b.textContent = text;
     b.hidden = !text;
+    syncBannerHeight();
+  }
+  // The banner and the desktop sidebar are both pinned to the top; the sidebar
+  // starts below the banner so the banner never covers the brand or account chip.
+  var bannerWatch = false;
+  function syncBannerHeight() {
+    var b = ROOT && ROOT.querySelector('.cx-banner');
+    if (!ROOT) return;
+    ROOT.style.setProperty('--cx-banner-h', b && !b.hidden ? b.offsetHeight + 'px' : '0px');
+    if (!bannerWatch && typeof window !== 'undefined' && window.addEventListener) {
+      bannerWatch = true;
+      window.addEventListener('resize', syncBannerHeight);
+    }
   }
 
   /* --------------------------------------------------- panels and tables -- */
@@ -571,9 +584,43 @@
       set = function (v) { input.value = str(v); };
       wrapClass += ' cx-span';
     } else if (type === 'countries') {
-      input = h('input', { type: 'text', id: id, disabled: !editable, placeholder: f.placeholder || 'US, CA', autocapitalize: 'characters', spellcheck: 'false', 'aria-describedby': describedBy });
-      get = function () { return countryList(input.value); };
-      set = function (v) { input.value = (isArr(v) ? v : countryList(v)).join(', '); };
+      // A real picker: search by name or code, tick countries, see them as chips.
+      // `input` is the wrapper; it fires 'input' whenever the selection changes.
+      var picked = [];
+      var chipsEl = h('div', { class: 'cx-chips cx-cp-chips' });
+      var search = h('input', { type: 'search', id: id, disabled: !editable, placeholder: f.placeholder || 'Search countries — name or code', autocomplete: 'off', spellcheck: 'false', 'aria-describedby': describedBy });
+      var listEl = h('div', { class: 'cx-cp-list', role: 'group', 'aria-label': 'Countries' });
+      input = h('div', { class: 'cx-cp' }, chipsEl, editable ? search : null, editable ? listEl : null);
+      var fire = function () { var ev; try { ev = new Event('input'); } catch (e) { ev = document.createEvent('Event'); ev.initEvent('input', false, false); } input.dispatchEvent(ev); };
+      var paintChips = function () {
+        replace(chipsEl, picked.length ? map(picked, function (c) {
+          return h('span', { class: 'cx-badge t-muted cx-cp-chip' }, txt(countryName(c) + ' · ' + c),
+            editable ? h('button', { type: 'button', class: 'cx-cp-x', 'aria-label': 'Remove ' + countryName(c), text: '×', onclick: function () { picked = filter(picked, function (x) { return x !== c; }); paintChips(); paintList(); fire(); } }) : null);
+        }) : faint('No countries chosen.'));
+      };
+      var paintList = function () {
+        if (!editable) return;
+        var q = String(search.value || '').trim().toLowerCase();
+        var rows = filter(COUNTRY_CODES, function (c) { return !q || c.toLowerCase() === q || countryName(c).toLowerCase().indexOf(q) !== -1; });
+        replace(listEl, rows.length ? map(rows, function (c) {
+          var cb = h('input', { type: 'checkbox', checked: contains(picked, c) });
+          cb.addEventListener('change', function () {
+            picked = cb.checked ? (contains(picked, c) ? picked : picked.concat([c])) : filter(picked, function (x) { return x !== c; });
+            paintChips(); fire();
+          });
+          return h('label', { class: 'cx-check cx-cp-row' }, cb, h('span', { text: countryName(c) }), h('span', { class: 'cx-mono cx-faint', text: c }));
+        }) : faint('No country matches that.'));
+      };
+      search.addEventListener('input', paintList);
+      search.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        var q = String(search.value || '').trim().toUpperCase();
+        var hit = /^[A-Z]{2}$/.test(q) && contains(COUNTRY_CODES, q) ? q : find(COUNTRY_CODES, function (c) { return countryName(c).toUpperCase().indexOf(q) === 0; });
+        if (hit && !contains(picked, hit)) { picked = picked.concat([hit]); paintChips(); paintList(); fire(); }
+      });
+      get = function () { return picked.slice(); };
+      set = function (v) { picked = countryList(v); paintChips(); paintList(); };
     } else if (type === 'readonly') {
       input = h('span', { class: 'cx-mono', id: id });
       get = function () { return f.value; };
@@ -618,6 +665,22 @@
       }
     };
   }
+  // ISO 3166-1 alpha-2. Names come from the browser (Intl.DisplayNames) so they
+  // follow the viewer's language; the bare code is the fallback.
+  var COUNTRY_CODES = ('AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ ' +
+    'CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY ' +
+    'HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ ' +
+    'NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ ' +
+    'TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS XK YE YT ZA ZM ZW').split(' ');
+  var countryNamer = null;
+  try { if (typeof Intl !== 'undefined' && Intl.DisplayNames) countryNamer = new Intl.DisplayNames([navigator.language || 'en', 'en'], { type: 'region' }); } catch (e) { countryNamer = null; }
+  var COUNTRY_NAME_CACHE = {};
+  function countryName(c) {
+    if (hasOwn.call(COUNTRY_NAME_CACHE, c)) return COUNTRY_NAME_CACHE[c];
+    var n = c; try { if (countryNamer) n = countryNamer.of(c) || c; } catch (e) { n = c; }
+    COUNTRY_NAME_CACHE[c] = n; return n;
+  }
+  (function () { COUNTRY_CODES.sort(function (a, b) { return countryName(a) < countryName(b) ? -1 : countryName(a) > countryName(b) ? 1 : 0; }); })();
   function countryList(v) {
     if (isArr(v)) return map(v, function (x) { return String(x).toUpperCase(); });
     return filter(map(String(v || '').toUpperCase().split(/[^A-Z]+/), function (s) { return s; }), function (s) { return /^[A-Z]{2}$/.test(s); });
@@ -957,11 +1020,14 @@
     if (ROOT.className.indexOf('cx') === -1) ROOT.className = (ROOT.className ? ROOT.className + ' ' : '') + 'cx';
     var banner = h('div', { class: 'cx-banner', role: 'status', hidden: true });
     ROOT.appendChild(banner);
+    syncBannerHeight();
 
     var nav = h('nav', { class: 'cx-nav', 'aria-label': 'Console sections' });
     var lastGroup = null;
     each(SECTIONS, function (s) {
       if (!sectionAvailable(s)) return;
+      // Countries live on the IP allowlist page when that page exists.
+      if (s.key === 'country' && sectionAvailable(SEC_BY_KEY.ips)) return;
       if (s.group !== lastGroup) {
         lastGroup = s.group;
         nav.appendChild(h('div', { class: 'cx-nav-group', 'aria-hidden': 'true', text: s.group }));
@@ -2572,6 +2638,7 @@
                 confirm: { title: 'Remove ' + e.ip_or_cidr + '?', body: (mine === e ? 'This is the entry covering your own address. The server will refuse unless another entry covers you. ' : '') + 'Requests from it are refused from now on.', confirmLabel: 'Remove', danger: true },
                 run: function () { return api('DELETE', '/ips/' + enc(e.id)); }, done: 'Entry removed.', after: refreshNow })] : null] };
         }, 'No entries yet.') }));
+      if (feat('country_rule')) { var cHost = h('div', { class: 'cx-section-gap' }); ctx.body.appendChild(cHost); countryRuleInto(ctx, cHost, false); }
     });
   };
 
@@ -2654,25 +2721,32 @@
 
   /* ======================================================== country rule == */
 
-  SEC_BY_KEY.country.render = function (ctx) {
+  SEC_BY_KEY.country.render = function (ctx) { countryRuleInto(ctx, ctx.body, true); };
+
+  // The country rule, rendered into `host`. Used on its own page and, by
+  // default, as the Countries part of the IP allowlist page.
+  function countryRuleInto(ctx, host, standalone) {
     var m = msgNode();
-    load(ctx, api('GET', '/country-rule'), function (d) {
+    var sub = { body: host, alive: ctx.alive, ready: standalone ? ctx.ready : function () {} };
+    load(sub, api('GET', '/country-rule'), function (d) {
+      if (!standalone) host.appendChild(h('div', { class: 'cx-page-head cx-subhead', id: 'countries' }, h('h2', { text: 'Countries' }),
+        h('p', { text: 'Allow or block whole countries, on top of the addresses above. An address on the allowlist is always let through whatever its country, and an address whose country cannot be told is never blocked.' })));
       var canManage = d.can_manage !== false && has('ips.manage');
       var modes = d.modes || ['off', 'allow'];
       if (!feat('country_deny_mode')) modes = filter(modes, function (x) { return x !== 'deny'; });
       var MODE = { off: ['No rule', 'Every country may reach the site.'], allow: ['Allow only the countries listed', 'Everyone else is refused, unless the allowlist covers them.'], deny: ['Block the countries listed', 'Everyone else may reach the site.'] };
       var modeC = control({ key: 'mode', label: 'Rule', type: 'radio', value: d.mode || 'off', editable: canManage,
         options: map(modes, function (k) { return { value: k, label: MODE[k] ? MODE[k][0] : k, description: MODE[k] ? MODE[k][1] : '' }; }) });
-      var listC = control({ key: 'countries', label: 'Countries — two-letter codes, comma separated', type: 'countries', value: d.countries || [], editable: canManage });
+      var listC = control({ key: 'countries', label: 'Countries', type: 'countries', value: d.countries || [], editable: canManage });
       var preview = h('div', { class: 'cx-chips', style: { marginTop: '8px' } });
       function paintPreview() {
         var list = listC.get();
-        replace(preview, list.length ? map(list, function (c) { return badge(c, c === d.your_country ? 'info' : 'muted', 'cx-mono'); }) : faint('No countries listed.'));
+        replace(preview, list.length && d.your_country && contains(list, d.your_country) ? faint('Your own country (' + countryName(d.your_country) + ') is in the list.') : null);
       }
       listC.input.addEventListener('input', paintPreview);
       paintPreview();
-      var state = d.mode === 'allow' && (d.countries || []).length ? 'In force: only ' + d.countries.join(', ') + ' may reach the site from an address that is not on the allowlist.'
-        : d.mode === 'deny' && (d.countries || []).length ? 'In force: ' + d.countries.join(', ') + ' are refused unless the allowlist covers them.'
+      var state = d.mode === 'allow' && (d.countries || []).length ? 'In force: only ' + map(d.countries, countryName).join(', ') + ' may reach the site from an address that is not on the allowlist.'
+        : d.mode === 'deny' && (d.countries || []).length ? 'In force: ' + map(d.countries, countryName).join(', ') + ' are refused unless the allowlist covers them.'
         : 'No country rule is in force.';
       var presets = canManage && d.presets && d.presets.length ? h('div', { class: 'cx-btn-row', style: { marginTop: '12px' } }, map(d.presets, function (p) {
         return btn(str(p.label), { kind: 'secondary', sm: true, onClick: function () { modeC.set(p.mode || 'allow'); listC.set(p.countries || []); paintPreview(); } });
@@ -2682,16 +2756,16 @@
           var mode = modeC.get(), list = listC.get();
           var refused = mode === 'allow' && list.length && d.your_country && !contains(list, d.your_country) || mode === 'deny' && contains(list, d.your_country);
           return { title: 'Save the country rule?', danger: !!refused, confirmLabel: 'Save rule',
-            body: (mode === 'off' || !list.length ? 'There will be no country rule.' : (mode === 'allow' ? 'Only ' : 'Refused: ') + list.join(', ') + '.') +
+            body: (mode === 'off' || !list.length ? 'There will be no country rule.' : (mode === 'allow' ? 'Only ' : 'Refused: ') + map(list, countryName).join(', ') + '.') +
               (refused ? ' Your own country (' + d.your_country + ') would be refused; the server will refuse this unless the allowlist covers you.' : '') };
         },
         run: function () { return api('PUT', '/country-rule', { mode: modeC.get(), countries: listC.get() }); }, done: 'Country rule saved.', after: refreshNow }) : null;
-      ctx.body.appendChild(callout(d.mode !== 'off' && (d.countries || []).length ? 'ok' : 'info', null, state + (d.your_country ? ' You are connecting from ' + d.your_country + '.' : '')));
-      ctx.body.appendChild(panel({ title: 'The rule', sub: canManage ? null : 'You can read this rule but not change it.',
+      host.appendChild(callout(d.mode !== 'off' && (d.countries || []).length ? 'ok' : 'info', null, state + (d.your_country ? ' You are connecting from ' + countryName(d.your_country) + ' (' + d.your_country + ').' : '')));
+      host.appendChild(panel({ title: standalone ? 'The rule' : 'Country rule', sub: canManage ? null : 'You can read this rule but not change it.',
         body: [modeC.node, h('div', { style: { marginTop: '14px' } }, listC.node), preview, presets, saveB ? h('div', { class: 'cx-form-actions' }, saveB) : null, m] }));
-      if (d.notes && d.notes.length) ctx.body.appendChild(panel({ title: 'What this rule never does', body: h('ul', { class: 'cx-evidence' }, map(d.notes, function (n) { return h('li', { text: n }); })) }));
+      if (d.notes && d.notes.length) host.appendChild(panel({ title: 'What this rule never does', body: h('ul', { class: 'cx-evidence' }, map(d.notes, function (n) { return h('li', { text: n }); })) }));
     });
-  };
+  }
 
   /* ============================================================= devices == */
 
