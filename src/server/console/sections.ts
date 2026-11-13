@@ -6,9 +6,12 @@ import { coerceSetting, SETTING_GROUPS, SETTINGS, settingDef, type SettingValue 
 import { monthKey } from "@/lib/streak/restore";
 import { currentRouting } from "../alerts";
 import { all, first, run, type Param } from "../db";
-import { APP_NAME } from "../env";
+import { gateStatus } from "../../../gate-kit/gate.mjs";
+import { APP_NAME, cfEnv } from "../env";
 import { logEvent } from "../events";
-import { addRule, findRule, isLive, listRules, matchingRules, revokeRule, updateRule, type IpRule } from "../ip-rules";
+import { COUNTRY_PRESETS, countryName, countryRefused, parseCountryRule, type CountryRule } from "@/lib/country-rule";
+import { getCountryRule, requestCountry, saveCountryRule } from "../country-rule";
+import { addRule, findRule, isAllowlisted, isLive, listRules, matchingRules, revokeRule, updateRule, type IpRule } from "../ip-rules";
 import { emailConfigured } from "../mailer";
 import { listSessions } from "../session";
 import { getSettings, saveSettings } from "../settings";
@@ -33,7 +36,7 @@ export const FEATURES = {
   security: true,
   ip_allowlist: true,
   deny_list: true,
-  country_rule: false, // no country gate on this site
+  country_rule: true, // PORTAL-STANDARD §9: "Countries" on the IP allowlist page
   devices: false, // no trusted-device model; sessions carry the device
   sessions: true,
   audit: true,
@@ -56,7 +59,7 @@ export const FEATURES = {
   ip_link_person: false,
   deny_auto: true,
   deny_expiry: true,
-  country_deny_mode: false,
+  country_deny_mode: true,
   device_approval: false,
   device_block: false,
   visitors_detail: true,
@@ -72,7 +75,8 @@ export async function bootstrap(ctx: ConsoleCtx) {
   const me = ctx.me;
   const banners: string[] = [];
   if (!settings.auto_block_enabled) banners.push("Auto-blacklisting is OFF: suspicious IPs are reported but not blocked.");
-  if (!emailConfigured()) banners.push("Email isn't configured, so security alerts are recorded but not delivered.");
+  if (!emailConfigured()) banners.push("Email isn't configured (PLUNK_API_KEY isn't set), so security alerts are recorded but not delivered.");
+  if (gateStatus(cfEnv()).state === "off") banners.push("The CAPTCHA wall is OFF (GATE_MODE=\"off\"): every visitor loads the site without solving a CAPTCHA.");
   const pending = await first<{ deny: number }>(
     "SELECT COUNT(*) AS deny FROM ip_rules WHERE kind = 'deny' AND source = 'auto' AND revoked_at IS NULL AND created_at >= ?",
     ctx.now - DAY,
@@ -167,10 +171,14 @@ export async function overview(ctx: ConsoleCtx) {
   );
   const v = c!;
   const posture: { severity: "ok" | "warn" | "danger"; title: string; detail?: string; href?: string }[] = [];
+  // PORTAL-STANDARD §10: green only when the wall is on and configured; red when off (GATE_MODE),
+  // not configured or misconfigured (Cloudflare's test keys count as misconfigured here).
+  const wall = gateStatus(cfEnv());
+  posture.push({ severity: wall.ok ? "ok" : "danger", title: `${wall.label}.`, detail: wall.detail, href: "#settings" });
   posture.push(
     emailConfigured()
       ? { severity: "ok", title: "Email is configured; security alerts are delivered." }
-      : { severity: "danger", title: "Email isn't configured.", detail: "Alerts are recorded but not sent. Set EMAIL_API_KEY or PLUNK_API_KEY and EMAIL_FROM." },
+      : { severity: "danger", title: "Email isn't configured.", detail: "Alerts are recorded but not sent. Set the PLUNK_API_KEY secret on the Worker." },
   );
   posture.push(
     settings.auto_block_enabled
@@ -192,8 +200,19 @@ export async function overview(ctx: ConsoleCtx) {
       ? { severity: "ok", title: "The IP allowlist marks trusted addresses; it isn't enforced.", href: "#settings" }
       : { severity: "ok", title: `The IP allowlist is enforced for ${settings.allowlist_mode === "admins" ? "admins" : "everyone"}.` },
   );
+  const countries = await getCountryRule();
+  posture.push(
+    countries.mode === "off" || countries.countries.length === 0
+      ? { severity: "ok", title: "No country rule: sign-in is open from every country.", href: "#ips" }
+      : {
+          severity: "ok",
+          title: `Country rule: sign-in ${countries.mode === "allow" ? "only from" : "refused from"} ${countries.countries.join(", ")}.`,
+          href: "#ips",
+        },
+  );
   const routing = currentRouting(ctx.req.nextUrl.host);
   posture.push({ severity: "ok", title: `Alerts go from ${routing.from} to ${routing.to}.` });
+  const captcha = await captchaCounts(now);
   return json({
     stats: [
       { key: "people", label: "People", value: v.total, sub: `${v.active_day} active in 24 h`, href: "#people" },
@@ -204,6 +223,13 @@ export async function overview(ctx: ConsoleCtx) {
       { key: "failed", label: "Failed sign-ins (24 h)", value: v.failed, tone: v.failed ? "warn" : null, href: "#audit?category=auth" },
       { key: "auto_blocks", label: "Auto-blocks (7 days)", value: v.auto7, tone: v.auto7 ? "danger" : null, href: "#deny" },
       { key: "alerts", label: "Alerts (24 h)", value: v.alerts24, href: "#alerts" },
+      ...CAPTCHA_STATS.map(({ event, key, label }) => ({
+        key,
+        label,
+        value: captcha[event].day,
+        sub: `${captcha[event].month.toLocaleString("en-US")} in 30 days`,
+        href: "#settings",
+      })),
     ],
     posture,
     queue: [
@@ -213,6 +239,35 @@ export async function overview(ctx: ConsoleCtx) {
     ].filter((q) => q.count > 0),
     events: await recentSecurityEvents(15),
   });
+}
+
+/** The CAPTCHA wall's counters (gate_stats, written in hourly batches by the Worker entry). "24 h" never breaks. */
+const CAPTCHA_STATS = [
+  { event: "challenge_served", key: "captcha_challenges", label: "CAPTCHAs shown (24\u00a0h)" },
+  { event: "verify_ok", key: "captcha_solved", label: "CAPTCHAs solved (24\u00a0h)" },
+  { event: "verify_failed", key: "captcha_failed", label: "CAPTCHAs failed (24\u00a0h)" },
+  // Files and API calls refused with the 403 JSON (no page to show the CAPTCHA on).
+  { event: "blocked", key: "captcha_blocked", label: "CAPTCHA blocks (24\u00a0h)" },
+] as const;
+
+type CaptchaEvent = (typeof CAPTCHA_STATS)[number]["event"];
+
+/** UTC hour bucket, as the Gate kit writes it: "2026-11-12T22". */
+const hourBucket = (ms: number) => new Date(ms).toISOString().slice(0, 13);
+
+export async function captchaCounts(now: number): Promise<Record<CaptchaEvent, { day: number; month: number }>> {
+  const rows = await all<{ event: string; day: number; month: number }>(
+    `SELECT event, COALESCE(SUM(CASE WHEN hour >= ?1 THEN count ELSE 0 END), 0) AS day, COALESCE(SUM(count), 0) AS month
+     FROM gate_stats WHERE hour >= ?2 GROUP BY event`,
+    hourBucket(now - 23 * 3_600_000),
+    hourBucket(now - 30 * DAY + 3_600_000),
+  );
+  const out = {} as Record<CaptchaEvent, { day: number; month: number }>;
+  for (const { event } of CAPTCHA_STATS) {
+    const row = rows.find((r) => r.event === event);
+    out[event] = { day: row?.day ?? 0, month: row?.month ?? 0 };
+  }
+  return out;
 }
 
 // ---- Roles ----
@@ -774,4 +829,51 @@ export async function sessions(ctx: ConsoleCtx) {
 
 export async function deleteSessionRoute(ctx: ConsoleCtx) {
   return revokeOneSession(ctx, ctx.params.id);
+}
+
+// ---- Country rule (PORTAL-STANDARD §9; shown as "Countries" on the IP allowlist page) ----
+
+function describeRule(r: CountryRule): string {
+  if (r.mode === "off" || r.countries.length === 0) return "no rule";
+  return `${r.mode === "allow" ? "only" : "all but"} ${r.countries.join(", ")}`;
+}
+
+export async function getCountryRuleRoute(ctx: ConsoleCtx) {
+  need(ctx, "ips.view");
+  const rule = await getCountryRule();
+  return json({
+    mode: rule.mode,
+    countries: rule.countries,
+    modes: ["off", "allow", "deny"],
+    presets: COUNTRY_PRESETS,
+    notes: [
+      "Applies to sign-in, account pages, the admin console and their APIs. The public pages stay open to everyone.",
+      "Never overrides the IP allowlist: an allowlisted address is never refused for its country.",
+      "An unknown country (no data, XX, or Tor) is never blocked. An empty list means no rule, never \"allow nobody\".",
+      "Refused visitors are told exactly why, and each refused country sends at most one alert per 10 minutes.",
+    ],
+    your_country: await requestCountry(),
+    can_manage: ctx.caps.has("ips.manage"),
+  });
+}
+
+export async function putCountryRule(ctx: ConsoleCtx) {
+  need(ctx, "ips.manage");
+  const parsed = parseCountryRule(ctx.body);
+  if (!parsed.ok) throw err(400, "validation", parsed.error, { field: parsed.field });
+  const rule = parsed.rule;
+  const mine = await requestCountry();
+  if (mine && countryRefused(rule, mine) && !(await isAllowlisted(ctx.ip))) {
+    throw err(
+      400,
+      "self_lockout",
+      `This rule would refuse your own country, ${countryName(mine)} (${mine}), and your address ${ctx.ip} isn't on the IP allowlist. Add your address to the allowlist first, or include ${mine}.`,
+    );
+  }
+  const before = await getCountryRule();
+  await saveCountryRule(rule, ctx.me.username, ctx.now);
+  if (describeRule(before) !== describeRule(rule) || before.mode !== rule.mode) {
+    await logEvent("admin.country_rule", { actor: ctx.me, user: ctx.me, detail: { from: describeRule(before), to: describeRule(rule) }, now: ctx.now });
+  }
+  return json({ mode: rule.mode, countries: rule.countries });
 }

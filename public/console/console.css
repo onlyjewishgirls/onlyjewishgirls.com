@@ -164,7 +164,7 @@ html, body { margin: 0; background: var(--cx-bg); }
 .cx-side {
   background: var(--cx-side); color: var(--cx-side-text);
   padding: 20px 14px 24px; display: flex; flex-direction: column;
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: var(--cx-banner-h, 0px); height: calc(100vh - var(--cx-banner-h, 0px)); overflow-y: auto;
 }
 .cx .cx-brand {
   color: var(--cx-side-bright); font-family: var(--cx-font-display); font-weight: 700;
@@ -736,3 +736,14 @@ a.cx-stat:hover { border-color: var(--cx-primary); }
 /* Table cells size to whole words: the root's overflow-wrap:anywhere would let
    a column shrink until 'Permanent' splits mid-word. */
 .cx td, .cx th { overflow-wrap: break-word; }
+
+/* Country picker */
+.cx-cp { display: flex; flex-direction: column; gap: 8px; }
+.cx-cp-chips { min-height: 28px; }
+.cx-cp-chip { display: inline-flex; align-items: center; gap: 4px; }
+.cx-cp-x { border: 0; background: none; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; min-height: 0 !important; }
+.cx-cp-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--cx-line); border-radius: 10px; padding: 4px 8px; background: var(--cx-field); }
+.cx-cp-row { display: grid !important; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 7px 4px; border-bottom: 1px solid var(--cx-line); }
+.cx-cp-row:last-child { border-bottom: 0; }
+.cx-section-gap { margin-top: 28px; }
+.cx-subhead h2 { margin-bottom: 6px; }

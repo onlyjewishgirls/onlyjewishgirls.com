@@ -7,12 +7,13 @@ APP_SECRET=
 # Optional. Lets one passkey work on both onlyjewishgirls.com and www.onlyjewishgirls.com.
 # WEBAUTHN_RP_ID=onlyjewishgirls.com
 
-# Optional. Sends password-reset emails through Resend. Without these, emails are printed to the terminal.
+# Optional. Mail (reset links, email sign-in codes, security alerts) goes through Plunk; this key alone
+# is enough. Without a key, emails are printed to the terminal.
+# PLUNK_API_KEY=sk_...
+# PLUNK_API_URL=https://next-api.useplunk.com/v1/send   (optional override)
+# Optional. Resend, the fallback when Plunk fails, and the sender (default no-reply@onlyjewishgirls.com).
 # EMAIL_API_KEY=re_...
 # EMAIL_FROM=OnlyJewishGirls <no-reply@onlyjewishgirls.com>
-# Optional. Plunk, the backup when Resend fails (or first with EMAIL_PRIMARY=plunk). Either key alone is enough.
-# PLUNK_API_KEY=sk_...
-# EMAIL_PRIMARY=resend
 
 # Optional. Base URL for links in emails. Defaults to the address the request came in on.
 # PUBLIC_ORIGIN=https://onlyjewishgirls.com
@@ -21,3 +22,15 @@ APP_SECRET=
 # unset, they default to securityalerts@ / soc@ the site's domain.
 # ALERTS_EMAIL_FROM=securityalerts@onlyjewishgirls.com
 # ALERTS_EMAIL_TO=soc@onlyjewishgirls.com
+
+# The CAPTCHA wall (PORTAL-STANDARD §10): nothing loads until the visitor solves Cloudflare Turnstile.
+# Locally, Cloudflare's always-pass test keys (`npm run preview` adds them; the wall accepts them only on
+# localhost). Open http://localhost:<port> in Chrome or Firefox (Safari drops the Secure pass cookie on http).
+# In production: a real site key in the TURNSTILE_SITE_KEY variable and the secret as the
+# TURNSTILE_SECRET_KEY secret. Missing keys = every request gets a 503.
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+# Optional. 32+ characters; signs CAPTCHA passes instead of a key derived from the Turnstile secret.
+# GATE_SECRET=
+# Break-glass only: "off" lets everyone in without a CAPTCHA (the console turns red, one alert a day).
+# GATE_MODE=off

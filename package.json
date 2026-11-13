@@ -11,7 +11,7 @@
     "cf-typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run && node --test gate-kit/test/gate.test.mjs",
     "dictionary": "UPDATE_DICTIONARY=1 vitest run tests/unit/dictionary.test.ts",
     "test:e2e": "playwright test"
   },

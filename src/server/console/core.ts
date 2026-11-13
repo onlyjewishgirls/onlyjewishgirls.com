@@ -4,6 +4,7 @@ import { hasPermission, isAdminRole, ROLE_LABELS } from "@/lib/admin/permissions
 import { ConfigError } from "../app-secret";
 import { adminDenied } from "../admin";
 import { clientIp, ipBlockedMessage } from "../http";
+import { checkCountry, recordCountryRefusal } from "../country-rule";
 import { denyingRule } from "../ip-rules";
 import { mfaState, nextStep } from "../mfa";
 import { rateLimit } from "../rate-limit";
@@ -149,6 +150,11 @@ export async function dispatch(req: NextRequest, segments: string[], routes: Rou
     }
     const denied = await denyingRule(ip);
     if (denied) throw err(403, "ip_blocked", ipBlockedMessage(ip, denied));
+    const country = await checkCountry(ip);
+    if (!country.ok) {
+      await recordCountryRefusal(country, req.nextUrl.pathname);
+      throw err(403, "country_blocked", country.message);
+    }
     const auth = await getAuth();
     if (!auth || auth.session.stage !== "full") throw err(401, "unauthenticated", "Your sign-in expired. Sign in again.");
     if (!isAdminRole(auth.user.role)) {

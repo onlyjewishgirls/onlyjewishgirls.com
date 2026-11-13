@@ -1,8 +1,9 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, query, screenshot, signIn, sql } from "./helpers";
+import { E2E_ORIGIN } from "../../playwright.config";
+import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, passCaptcha, query, screenshot, signIn, sql } from "./helpers";
 
-const ORIGIN = "http://localhost:3100";
+const ORIGIN = E2E_ORIGIN;
 
 const owner = {
   firstName: "Batsheva",
@@ -282,13 +283,12 @@ test("owner monitors and controls accounts from the classic admin panel", async 
   });
 
   await test.step("the visitor log shows guests and members, never reset tokens or admin pages", async () => {
-    const guestContext = await browser.newContext({
-      baseURL: ORIGIN,
-      userAgent:
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      locale: "he-IL",
-      timezoneId: "Asia/Jerusalem",
-    });
+    const iphone =
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+    const guestContext = await browser.newContext({ baseURL: ORIGIN, userAgent: iphone, locale: "he-IL", timezoneId: "Asia/Jerusalem" });
+    // A guest who already solved the CAPTCHA (the pass is bound to the browser). On a first visit the page
+    // after the CAPTCHA is reached from the challenge page, so the outside referrer isn't seen.
+    await passCaptcha(guestContext, iphone);
     const g = await guestContext.newPage();
     const guestErrors = collectConsoleErrors(g);
     const beacon = () => g.waitForResponse((r) => r.url().endsWith("/api/visit"));

@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
     "cloudflare-env.d.ts",
     // The shared Console kit, vendored as-is from console-kit/ (upstream owns its style).
     "public/console/**",
+    // The shared Gate kit (the CAPTCHA wall, PORTAL-STANDARD §10), vendored as-is from gate-kit/.
+    "gate-kit/**",
   ]),
 ]);
 

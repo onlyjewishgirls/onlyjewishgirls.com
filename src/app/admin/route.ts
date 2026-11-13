@@ -3,6 +3,7 @@ import { isAdminRole } from "@/lib/admin/permissions";
 import { adminDenied } from "@/server/admin";
 import { APP_NAME } from "@/server/env";
 import { mfaState, nextStep } from "@/server/mfa";
+import { checkCountry, recordCountryRefusal } from "@/server/country-rule";
 import { getAuth } from "@/server/session";
 
 /** Bumped with the vendored kit (public/console/) so browsers don't keep an old copy. */
@@ -32,6 +33,11 @@ const html = `<!doctype html>
  * before: the sign-in page, their next sign-in step, or a plain 404.
  */
 export async function GET(req: NextRequest) {
+  const country = await checkCountry(req.headers.get("cf-connecting-ip"));
+  if (!country.ok) {
+    await recordCountryRefusal(country, "/admin");
+    return new Response(country.message, { status: 403, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  }
   const auth = await getAuth();
   if (!auth) return Response.redirect(new URL("/login", req.url), 303);
   const next = nextStep(auth.session.stage, await mfaState(auth.user), auth.user.mustChangePassword);

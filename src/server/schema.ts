@@ -1,7 +1,8 @@
 /**
  * Database migrations, applied automatically the first time each Worker
- * instance touches the database. Append new entries; never edit old ones.
- * Each entry is a list of statements run atomically.
+ * instance touches the database (applyMigrations, below). Append new entries;
+ * never edit old ones. Each entry is a list of statements run atomically.
+ * No imports: the Worker entry (src/worker/) uses this file outside Next.js.
  */
 export const MIGRATIONS: string[][] = [
   [
@@ -249,4 +250,42 @@ export const MIGRATIONS: string[][] = [
     )`,
     `CREATE INDEX IF NOT EXISTS email_codes_user ON email_codes(user_id, created_at)`,
   ],
+  [
+    // The CAPTCHA wall (PORTAL-STANDARD §10, gate-kit/): challenges served, solved, failed and blocked,
+    // counted per UTC hour and written in batches by the Worker entry (src/worker/captcha.ts). Counters
+    // only: traffic without a pass is never audited, alerted or blacklisted.
+    `CREATE TABLE IF NOT EXISTS gate_stats (
+      hour  TEXT NOT NULL,                         -- UTC, '2026-11-12T22'
+      event TEXT NOT NULL,                         -- challenge_served, blocked, verify_ok, verify_failed, passed, misconfigured, gate_off
+      count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (hour, event)
+    )`,
+  ],
 ];
+
+async function currentVersion(d1: D1Database): Promise<number> {
+  const row = await d1.prepare("SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations").first<{ v: number }>();
+  return row?.v ?? 0;
+}
+
+/**
+ * Applies every migration this database hasn't had yet. Used by the app (db.ts, through the OpenNext
+ * request context) and by the Worker entry before the CAPTCHA wall writes its counters, so neither
+ * depends on the other having touched the database first. Safe to run concurrently.
+ */
+export async function applyMigrations(d1: D1Database) {
+  await d1
+    .prepare("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
+    .run();
+  for (let version = await currentVersion(d1); version < MIGRATIONS.length; version++) {
+    try {
+      await d1.batch([
+        ...MIGRATIONS[version].map((sql) => d1.prepare(sql)),
+        d1.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").bind(version + 1, Date.now()),
+      ]);
+    } catch (error) {
+      // Another Worker instance may have applied this migration at the same moment.
+      if ((await currentVersion(d1)) <= version) throw error;
+    }
+  }
+}

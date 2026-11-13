@@ -51,6 +51,8 @@ export const ROUTES: Route[] = [
   { method: "PATCH", pattern: "deny/:id", handler: sections.patchDeny, write: true },
   { method: "POST", pattern: "deny/:id/unblock", handler: sections.unblock, write: true },
 
+  { method: "GET", pattern: "country-rule", handler: sections.getCountryRuleRoute },
+  { method: "PUT", pattern: "country-rule", handler: sections.putCountryRule, write: true },
   { method: "GET", pattern: "sessions", handler: sections.sessions },
   { method: "DELETE", pattern: "sessions/:id", handler: sections.deleteSessionRoute, write: true },
 
