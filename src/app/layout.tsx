@@ -32,9 +32,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       <body className="flex min-h-full flex-col font-sans">
         <header className="border-b border-border bg-surface/80 backdrop-blur">
           <nav className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-            <Link href={signedIn ? "/home" : "/"} className="text-lg font-bold tracking-tight">
+            <Link href={signedIn ? "/home" : "/"} className="shrink-0 text-base font-bold tracking-tight sm:text-lg">
               Only<span className="text-brand">Jewish</span>Girls
             </Link>
+            {/* On phones the two buttons and the brand only fit on one line with tighter padding. */}
             <div className="flex items-center gap-2 text-sm">
               {auth ? (
                 <>
@@ -48,10 +49,10 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
                 </>
               ) : (
                 <>
-                  <Link href="/login" className="btn-secondary">
+                  <Link href="/login" className="btn-secondary whitespace-nowrap max-sm:px-2.5">
                     Sign in
                   </Link>
-                  <Link href="/register" className="btn-primary">
+                  <Link href="/register" className="btn-primary whitespace-nowrap max-sm:px-2.5">
                     Create account
                   </Link>
                 </>

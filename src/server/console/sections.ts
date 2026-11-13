@@ -241,12 +241,13 @@ export async function overview(ctx: ConsoleCtx) {
   });
 }
 
-/** The CAPTCHA wall's counters (gate_stats, written in hourly batches by the Worker entry). */
+/** The CAPTCHA wall's counters (gate_stats, written in hourly batches by the Worker entry). "24 h" never breaks. */
 const CAPTCHA_STATS = [
-  { event: "challenge_served", key: "captcha_challenges", label: "CAPTCHA challenges (24 h)" },
-  { event: "verify_ok", key: "captcha_solved", label: "CAPTCHAs solved (24 h)" },
-  { event: "verify_failed", key: "captcha_failed", label: "CAPTCHA failures (24 h)" },
-  { event: "blocked", key: "captcha_blocked", label: "Blocked without a CAPTCHA (24 h)" },
+  { event: "challenge_served", key: "captcha_challenges", label: "CAPTCHAs shown (24\u00a0h)" },
+  { event: "verify_ok", key: "captcha_solved", label: "CAPTCHAs solved (24\u00a0h)" },
+  { event: "verify_failed", key: "captcha_failed", label: "CAPTCHAs failed (24\u00a0h)" },
+  // Files and API calls refused with the 403 JSON (no page to show the CAPTCHA on).
+  { event: "blocked", key: "captcha_blocked", label: "CAPTCHA blocks (24\u00a0h)" },
 ] as const;
 
 type CaptchaEvent = (typeof CAPTCHA_STATS)[number]["event"];

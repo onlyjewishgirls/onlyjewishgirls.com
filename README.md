@@ -15,10 +15,23 @@ Open the site at `http://localhost:3000`, not `127.0.0.1`. Passkeys made on one 
 
 | Command | What it does |
 | --- | --- |
-| `npm test` | Unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection, and (against an in-memory SQLite stand-in for D1, [`tests/unit/harness.ts`](tests/unit/harness.ts)) the real sign-in, MFA, streak-restore and console routes: exact errors, MFA order, restore limits, set-streak rules, alert routing and dedupe, auto-blacklist |
+| `npm test` | The Gate kit's own suite (`gate-kit/test/`) and unit tests: password rules, TOTP (RFC 6238 vectors), streak and Yom Tov math, form validation, admin permissions and temporary passwords, visitor log cleaning and bot detection, and (against an in-memory SQLite stand-in for D1, [`tests/unit/harness.ts`](tests/unit/harness.ts)) the real sign-in, MFA, streak-restore and console routes: exact errors, MFA order, restore limits, set-streak rules, alert routing and dedupe, auto-blacklist |
 | `npm run test:e2e` | Builds the Worker, runs it in the Workers runtime (`wrangler dev`) with a throwaway D1 database in `.data/e2e`, and drives Chromium through: registration → passkey → authenticator app → recovery codes → every sign-in method → streak continue/break → forgot password, plus the admin panel (create an account, forced password change, re-verification, suspend + undo, edits, roles, remote sign-out, two-step reset, CSV export, delete, visitor log). If your machine already has Chromium, set `CHROMIUM_PATH` to skip `npx playwright install`. |
-| `npm run preview` | Builds and serves the Worker locally in the Workers runtime |
+| `npm run preview` | Builds and serves the Worker locally in the Workers runtime, CAPTCHA wall included (`npm run dev` has no wall: `next dev` doesn't run the Worker entry) |
 | `npm run lint` / `npm run typecheck` | ESLint / TypeScript |
+
+## CAPTCHA wall
+
+Nothing on the site loads, for anyone, until the visitor has solved a Cloudflare Turnstile CAPTCHA (PORTAL-STANDARD §10): no page, `_next/static` file, image, favicon, `robots.txt`, API, console, sign-in or 404. The owner, admins and allowlisted addresses solve it too.
+
+- **How.** [`worker.ts`](worker.ts) is the Worker entry. It runs the shared **Gate kit** (vendored unchanged in [`gate-kit/`](gate-kit); see its `INTEGRATION.md`) and only then hands the request to the OpenNext worker the build generates. `assets.run_worker_first: true` in `wrangler.jsonc` sends every path and method to the Worker first; OpenNext serves the static files itself, after the wall. The site's hooks and the order are in [`src/worker/captcha.ts`](src/worker/captcha.ts).
+- **Without a pass** a page navigation gets the challenge page (403); anything else gets `403 {"ok":false,"code":"captcha_required",…}`. Solving it posts to `/__gate/verify`, which checks the token with Turnstile (`siteverify`, with the visitor's IP; hostname and action must match) and sets the pass cookie `__Host-gate_pass`: signed, bound to the host, the IP address and the browser, lasting **Settings → CAPTCHA wall → Pass lifetime** (default 12 hours, 1–168). A new IP address (another network, a VPN) means a new CAPTCHA.
+- **Quiet by design.** Traffic without a pass never reaches the app, so it can't trip scanner/decoy or injection detection, the auto-blacklist, alert emails, the audit log or the visitor log. It is only counted (`gate_stats`, hourly): the console's Overview shows CAPTCHAs shown, solved and failed, and blocked file/API requests, for 24 hours and 30 days. With a pass, everything under Auto-blacklist and Security alerts applies as before.
+- **Keys.** `TURNSTILE_SITE_KEY` (plain variable) and `TURNSTILE_SECRET_KEY` (secret). Without them every request gets `503 Not available: CAPTCHA is not configured …` (fail closed). Optional `GATE_SECRET` (32+ characters) signs passes instead of a key derived from the Turnstile secret; changing it ends every pass.
+- **Break-glass.** A plain variable `GATE_MODE` = `off` lets everyone in without a CAPTCHA. The console's posture item and banner turn red and one security alert goes out per day (portal time zone) while it stays off. Delete the variable to turn the wall back on.
+- **Visitor log.** On a visitor's first page the outside referrer (a search engine, a shared link) is lost: that page is reached from the challenge page. Later pages and returning visitors with a pass are logged as before.
+- **No exemptions.** This site has no machine clients, so nothing skips the wall: not search engines, link previews, uptime monitors or webhooks.
+- **Locally**, `npm run preview` puts Cloudflare's always-pass test keys in `.dev.vars`; the wall accepts them only on `localhost`. Open `http://localhost:8787` in Chrome or Firefox (Safari doesn't keep the `Secure` pass cookie on plain http). Test keys anywhere else are a 503, and the console shows them as misconfigured.
 
 ## Registration
 
@@ -167,6 +180,7 @@ One-time setup in the Cloudflare dashboard, under **Workers & Pages → onlyjewi
 3. **Email (reset links, email sign-in codes, security alerts):** in Plunk, verify the domain `onlyjewishgirls.com` (it adds DNS records) and add a secret `PLUNK_API_KEY` with its secret key (`sk_…`). That's all that's required. Optional: a variable `EMAIL_FROM` to change the sender from `OnlyJewishGirls <no-reply@onlyjewishgirls.com>`, and, for a fallback, verify the domain in Resend and add a secret `EMAIL_API_KEY`. Dashboard variables survive deploys because `wrangler.jsonc` sets `keep_vars: true`; without it, each `wrangler deploy` would delete them.
 4. **Security alerts:** `ALERTS_EMAIL_FROM` / `ALERTS_EMAIL_TO` are in `wrangler.jsonc`; set them in the dashboard too if you change them there. The sender (`securityalerts@onlyjewishgirls.com`) must be on the domain verified in Plunk (and Resend, if used), and `soc@onlyjewishgirls.com` must be a mailbox someone reads.
 5. **Optional:** to serve both `onlyjewishgirls.com` and `www.onlyjewishgirls.com`, set the variable `WEBAUTHN_RP_ID=onlyjewishgirls.com` so one passkey works on both.
+6. **CAPTCHA wall (required: without it every request gets a 503).** In the Cloudflare dashboard, **Turnstile → Add widget**, mode **Managed**, with every hostname the Worker answers on: `onlyjewishgirls.com`, `www.onlyjewishgirls.com` (if used) and the `onlyjewishgirlsdotcom.<account>.workers.dev` URL (and `<account>.workers.dev` for preview URLs) if those are used. Put its site key in a variable `TURNSTILE_SITE_KEY` (dashboard or `wrangler.jsonc` `vars`) and its secret in a secret `TURNSTILE_SECRET_KEY`. Add both to the preview settings too if you use preview URLs. Then open the site in a private window: you should get the CAPTCHA, and after it the page you asked for.
 
 ## Layout
 
@@ -181,6 +195,7 @@ src/server/            D1 access + schema, sessions, password hashing, TOTP, Web
 src/app/api/           auth, MFA and admin endpoints, /api/console/* (Console kit), /api/decoy, and /api/visit
 src/server/console/    the Console kit's API over the server modules
 public/console/        the shared Console kit, vendored unchanged
+worker.ts, src/worker/  the Worker entry: the CAPTCHA wall (gate-kit/, vendored unchanged), then the OpenNext app
 src/app/               pages: /register, /login, /login/verify, /setup-mfa, /forgot-password, /reset-password,
                        /change-password, /home, /admin (overview, accounts, account, activity, visitors)
 tests/unit, tests/e2e  Vitest and Playwright

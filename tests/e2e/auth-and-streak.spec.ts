@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import { E2E_ORIGIN } from "../../playwright.config";
 import { addVirtualAuthenticator, blockPasskeyAutofill, query, screenshot, setPasskeyTouch, signIn, signOut, sql, totp } from "./helpers";
 
 const user = {
@@ -264,7 +265,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
 test("usernames and emails must be unique", async ({ request }) => {
   const register = (data: Record<string, unknown>) =>
     request.post("/api/auth/register", {
-      headers: { Origin: "http://localhost:3100" },
+      headers: { Origin: E2E_ORIGIN },
       data: {
         firstName: "Tova",
         middleName: "",
@@ -287,7 +288,7 @@ test("usernames and emails must be unique", async ({ request }) => {
 });
 
 test("forgot password says exactly what happened (no enumeration policy, §2)", async ({ request }) => {
-  const headers = { Origin: "http://localhost:3100" };
+  const headers = { Origin: E2E_ORIGIN };
   const password = "Gv6!Mz#Rt2Kw&Jp8";
   await request.post("/api/auth/register", {
     headers,

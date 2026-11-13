@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { E2E_ORIGIN } from "../../playwright.config";
 import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, query, screenshot, sql } from "./helpers";
 
 const owner = {
@@ -75,7 +76,7 @@ test("the admin console is the Console kit, with this site's features", async ({
     await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();
     await expect(page.getByText(/No rule|no rule|off/i).first()).toBeVisible();
     const res = await page.request.put("/api/console/country-rule", {
-      headers: { "X-Requested-With": "console", Origin: "http://localhost:3100" },
+      headers: { "X-Requested-With": "console", Origin: E2E_ORIGIN },
       data: { mode: "allow", countries: ["US", "CA", "IL"] },
     });
     // wrangler dev's local request has a country; whichever it is, the answer is either saved or an exact self_lockout.
@@ -87,7 +88,7 @@ test("the admin console is the Console kit, with this site's features", async ({
     await screenshot(page, "console-4-countries");
     // Leave no rule behind for later steps.
     await page.request.put("/api/console/country-rule", {
-      headers: { "X-Requested-With": "console", Origin: "http://localhost:3100" },
+      headers: { "X-Requested-With": "console", Origin: E2E_ORIGIN },
       data: { mode: "off", countries: [] },
     });
   });
