@@ -5,7 +5,7 @@
 
 export interface SettingDef {
   key: string;
-  group: "streaks" | "auto_block" | "access" | "general";
+  group: "streaks" | "auto_block" | "access" | "captcha" | "general";
   label: string;
   description: string;
   type: "int" | "bool" | "select" | "timezone";
@@ -27,6 +27,12 @@ export const SETTING_GROUPS = [
       "IP addresses that do something suspicious are taken off the allowlist, put on the deny list, and signed out, with no human step. An alert email goes out every time.",
   },
   { key: "access", label: "Access", description: "Who may sign in from where." },
+  {
+    key: "captcha",
+    label: "CAPTCHA wall",
+    description:
+      "Nothing on this site loads, for anyone, until the visitor solves a CAPTCHA. The owner, admins and allowlisted addresses solve it too. Visitors who haven't solved it are only counted: no alert emails, audit entries or blocks.",
+  },
   { key: "general", label: "General", description: "Time zone used for months, alerts and the console." },
 ] as const;
 
@@ -162,6 +168,18 @@ export const SETTINGS: SettingDef[] = [
     ],
   },
   {
+    key: "captcha_pass_hours",
+    group: "captcha",
+    label: "Pass lifetime",
+    description:
+      "How long one solved CAPTCHA lasts for one browser on one IP address. A new address (another network, a VPN) means a new CAPTCHA. Changes apply to passes issued from now on.",
+    type: "int",
+    default: 12,
+    min: 1,
+    max: 168,
+    unit: "hours",
+  },
+  {
     key: "time_zone",
     group: "general",
     label: "Portal time zone",
@@ -228,6 +246,7 @@ export interface Settings {
   auto_block_minutes: number;
   allowlist_mode: "off" | "admins" | "everyone";
   mfa_default_method: "passkey" | "totp";
+  captcha_pass_hours: number;
   time_zone: string;
 }
 
@@ -239,4 +258,17 @@ export function resolveSettings(stored: Record<string, unknown>): Settings {
     out[def.key] = parsed?.ok ? parsed.value : def.default;
   }
   return out as unknown as Settings;
+}
+
+/** The `settings` table's rows (values are JSON) resolved over the defaults. A corrupt row falls back to its default. */
+export function settingsFromRows(rows: { key: string; value: string }[]): Settings {
+  const stored: Record<string, unknown> = {};
+  for (const row of rows) {
+    try {
+      stored[row.key] = JSON.parse(row.value);
+    } catch {
+      // A corrupt row falls back to the default.
+    }
+  }
+  return resolveSettings(stored);
 }

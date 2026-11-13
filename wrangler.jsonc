@@ -2,7 +2,9 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   // Must match the Worker that Workers Builds deploys this repo to.
   "name": "onlyjewishgirlsdotcom",
-  "main": ".open-next/worker.js",
+  // worker.ts runs the CAPTCHA wall (PORTAL-STANDARD §10, gate-kit/) and then hands the request to the
+  // OpenNext worker (.open-next/worker.js) that the build generates; wrangler bundles the two together.
+  "main": "worker.ts",
   "compatibility_date": "2026-09-30",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
   // Builds the app before local `wrangler dev` / `wrangler deploy`. Workers Builds
@@ -12,7 +14,11 @@
   },
   "assets": {
     "directory": ".open-next/assets",
-    "binding": "ASSETS"
+    "binding": "ASSETS",
+    // Every path, every method, runs the Worker first, so no file (_next/static, images, favicon,
+    // robots.txt) is ever served around the CAPTCHA wall. OpenNext then serves these files itself,
+    // after the wall (its asset resolver is on whenever this is true).
+    "run_worker_first": true
   },
   "d1_databases": [
     {
@@ -40,6 +46,13 @@
   // no-reply@onlyjewishgirls.com). EMAIL_PRIMARY "resend" would put Resend first.
   // ALERTS_EMAIL_FROM / ALERTS_EMAIL_TO: where security alert emails come from and go to
   // (PORTAL-STANDARD §6; src/server/alerts.ts). The sender must be on a domain verified in Resend/Plunk.
+  // CAPTCHA wall (PORTAL-STANDARD §10): TURNSTILE_SITE_KEY goes here once the owner has created the
+  // Turnstile widget (Managed; hostnames onlyjewishgirls.com, www.onlyjewishgirls.com and the
+  // workers.dev ones in use), e.g. "TURNSTILE_SITE_KEY": "0x4AAAA...". It is left out until then on
+  // purpose: an empty value here would replace a key set in the dashboard. The secret is
+  // TURNSTILE_SECRET_KEY (`wrangler secret put TURNSTILE_SECRET_KEY`), never a var. Until both exist
+  // every request gets a 503 (fail closed). GATE_MODE "off" (dashboard, plain variable) is the
+  // break-glass switch.
   "vars": {
     "EMAIL_PRIMARY": "plunk",
     "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",

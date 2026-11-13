@@ -22,3 +22,15 @@ APP_SECRET=
 # unset, they default to securityalerts@ / soc@ the site's domain.
 # ALERTS_EMAIL_FROM=securityalerts@onlyjewishgirls.com
 # ALERTS_EMAIL_TO=soc@onlyjewishgirls.com
+
+# The CAPTCHA wall (PORTAL-STANDARD §10): nothing loads until the visitor solves Cloudflare Turnstile.
+# Locally, Cloudflare's always-pass test keys (`npm run preview` adds them; the wall accepts them only on
+# localhost). Open http://localhost:<port> in Chrome or Firefox (Safari drops the Secure pass cookie on http).
+# In production: a real site key in the TURNSTILE_SITE_KEY variable and the secret as the
+# TURNSTILE_SECRET_KEY secret. Missing keys = every request gets a 503.
+TURNSTILE_SITE_KEY=1x00000000000000000000AA
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+# Optional. 32+ characters; signs CAPTCHA passes instead of a key derived from the Turnstile secret.
+# GATE_SECRET=
+# Break-glass only: "off" lets everyone in without a CAPTCHA (the console turns red, one alert a day).
+# GATE_MODE=off

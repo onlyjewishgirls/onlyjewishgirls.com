@@ -6,7 +6,8 @@ import { coerceSetting, SETTING_GROUPS, SETTINGS, settingDef, type SettingValue 
 import { monthKey } from "@/lib/streak/restore";
 import { currentRouting } from "../alerts";
 import { all, first, run, type Param } from "../db";
-import { APP_NAME } from "../env";
+import { gateStatus } from "../../../gate-kit/gate.mjs";
+import { APP_NAME, cfEnv } from "../env";
 import { logEvent } from "../events";
 import { COUNTRY_PRESETS, countryName, countryRefused, parseCountryRule, type CountryRule } from "@/lib/country-rule";
 import { getCountryRule, requestCountry, saveCountryRule } from "../country-rule";
@@ -75,6 +76,7 @@ export async function bootstrap(ctx: ConsoleCtx) {
   const banners: string[] = [];
   if (!settings.auto_block_enabled) banners.push("Auto-blacklisting is OFF: suspicious IPs are reported but not blocked.");
   if (!emailConfigured()) banners.push("Email isn't configured (PLUNK_API_KEY isn't set), so security alerts are recorded but not delivered.");
+  if (gateStatus(cfEnv()).state === "off") banners.push("The CAPTCHA wall is OFF (GATE_MODE=\"off\"): every visitor loads the site without solving a CAPTCHA.");
   const pending = await first<{ deny: number }>(
     "SELECT COUNT(*) AS deny FROM ip_rules WHERE kind = 'deny' AND source = 'auto' AND revoked_at IS NULL AND created_at >= ?",
     ctx.now - DAY,
@@ -169,6 +171,10 @@ export async function overview(ctx: ConsoleCtx) {
   );
   const v = c!;
   const posture: { severity: "ok" | "warn" | "danger"; title: string; detail?: string; href?: string }[] = [];
+  // PORTAL-STANDARD §10: green only when the wall is on and configured; red when off (GATE_MODE),
+  // not configured or misconfigured (Cloudflare's test keys count as misconfigured here).
+  const wall = gateStatus(cfEnv());
+  posture.push({ severity: wall.ok ? "ok" : "danger", title: `${wall.label}.`, detail: wall.detail, href: "#settings" });
   posture.push(
     emailConfigured()
       ? { severity: "ok", title: "Email is configured; security alerts are delivered." }
@@ -206,6 +212,7 @@ export async function overview(ctx: ConsoleCtx) {
   );
   const routing = currentRouting(ctx.req.nextUrl.host);
   posture.push({ severity: "ok", title: `Alerts go from ${routing.from} to ${routing.to}.` });
+  const captcha = await captchaCounts(now);
   return json({
     stats: [
       { key: "people", label: "People", value: v.total, sub: `${v.active_day} active in 24 h`, href: "#people" },
@@ -216,6 +223,13 @@ export async function overview(ctx: ConsoleCtx) {
       { key: "failed", label: "Failed sign-ins (24 h)", value: v.failed, tone: v.failed ? "warn" : null, href: "#audit?category=auth" },
       { key: "auto_blocks", label: "Auto-blocks (7 days)", value: v.auto7, tone: v.auto7 ? "danger" : null, href: "#deny" },
       { key: "alerts", label: "Alerts (24 h)", value: v.alerts24, href: "#alerts" },
+      ...CAPTCHA_STATS.map(({ event, key, label }) => ({
+        key,
+        label,
+        value: captcha[event].day,
+        sub: `${captcha[event].month.toLocaleString("en-US")} in 30 days`,
+        href: "#settings",
+      })),
     ],
     posture,
     queue: [
@@ -225,6 +239,34 @@ export async function overview(ctx: ConsoleCtx) {
     ].filter((q) => q.count > 0),
     events: await recentSecurityEvents(15),
   });
+}
+
+/** The CAPTCHA wall's counters (gate_stats, written in hourly batches by the Worker entry). */
+const CAPTCHA_STATS = [
+  { event: "challenge_served", key: "captcha_challenges", label: "CAPTCHA challenges (24 h)" },
+  { event: "verify_ok", key: "captcha_solved", label: "CAPTCHAs solved (24 h)" },
+  { event: "verify_failed", key: "captcha_failed", label: "CAPTCHA failures (24 h)" },
+  { event: "blocked", key: "captcha_blocked", label: "Blocked without a CAPTCHA (24 h)" },
+] as const;
+
+type CaptchaEvent = (typeof CAPTCHA_STATS)[number]["event"];
+
+/** UTC hour bucket, as the Gate kit writes it: "2026-11-12T22". */
+const hourBucket = (ms: number) => new Date(ms).toISOString().slice(0, 13);
+
+export async function captchaCounts(now: number): Promise<Record<CaptchaEvent, { day: number; month: number }>> {
+  const rows = await all<{ event: string; day: number; month: number }>(
+    `SELECT event, COALESCE(SUM(CASE WHEN hour >= ?1 THEN count ELSE 0 END), 0) AS day, COALESCE(SUM(count), 0) AS month
+     FROM gate_stats WHERE hour >= ?2 GROUP BY event`,
+    hourBucket(now - 23 * 3_600_000),
+    hourBucket(now - 30 * DAY + 3_600_000),
+  );
+  const out = {} as Record<CaptchaEvent, { day: number; month: number }>;
+  for (const { event } of CAPTCHA_STATS) {
+    const row = rows.find((r) => r.event === event);
+    out[event] = { day: row?.day ?? 0, month: row?.month ?? 0 };
+  }
+  return out;
 }
 
 // ---- Roles ----

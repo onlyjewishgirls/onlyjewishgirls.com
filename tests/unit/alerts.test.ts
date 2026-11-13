@@ -65,6 +65,29 @@ describe("security alert emails (§6)", () => {
     expect(h.d1.one<{ suppressed: number }>("SELECT suppressed FROM security_alerts ORDER BY id DESC")!.suppressed).toBe(2);
   });
 
+  it("a burst of concurrent alerts with the same (event, key) sends one email, not one each", async () => {
+    const t0 = Date.now();
+    await Promise.all(Array.from({ length: 8 }, (_, i) => recordAndSend({ ...base, now: t0 + i }, "onlyjewishgirls.com")));
+    expect(sent).toHaveLength(1);
+    const statuses = h.d1.rows<{ status: string }>("SELECT status FROM security_alerts ORDER BY id").map((r) => r.status);
+    expect(statuses.filter((s) => s === "sent")).toHaveLength(1);
+    expect(statuses.filter((s) => s === "throttled")).toHaveLength(7);
+    // The next one after the window carries the count.
+    await recordAndSend({ ...base, now: t0 + ALERT_DEDUPE_MS + 10 }, "onlyjewishgirls.com");
+    expect(sent).toHaveLength(2);
+    expect(String(sent[1].body.text)).toContain("+7 more alerts like this");
+  });
+
+  it("parallel failed sign-ins from one address against one account email once", async () => {
+    await makeUser({ username: "miriam" });
+    await Promise.all(Array.from({ length: 4 }, () => call(login, "/api/auth/login", { body: { identifier: "miriam", password: "bad" } })));
+    await settle();
+    const rows = h.d1.rows<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'failed_signin'");
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((r) => r.status === "sent")).toHaveLength(1);
+    expect(sent.filter((m) => String(m.body.subject).includes("Wrong password") || String(m.body.subject).includes("sign-in"))).toHaveLength(1);
+  });
+
   it("records a failed delivery", async () => {
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     await recordAndSend(base, "onlyjewishgirls.com");
