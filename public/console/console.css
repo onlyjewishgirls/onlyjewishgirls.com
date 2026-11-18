@@ -275,6 +275,9 @@ a.cx-stat:hover { border-color: var(--cx-primary); }
 .cx-stat-label { color: var(--cx-muted); font-size: 12px; font-weight: 600; }
 .cx-stat-value { font-size: 26px; font-weight: 700; line-height: 1.2; margin-top: 4px; font-variant-numeric: tabular-nums; }
 .cx-stat-sub { color: var(--cx-muted); font-size: 12px; margin-top: 2px; }
+@media (max-width: 480px) { .cx-stat-label { min-height: 2.6em; } }
+/* Jumping to a settings group (#settings/<group>) clears the sticky banner. */
+.cx [data-group] { scroll-margin-top: calc(var(--cx-banner-h, 0px) + 16px); }
 .cx-stat.t-ok .cx-stat-value { color: var(--cx-ok); }
 .cx-stat.t-warn .cx-stat-value { color: var(--cx-warn); }
 .cx-stat.t-danger .cx-stat-value { color: var(--cx-danger); }

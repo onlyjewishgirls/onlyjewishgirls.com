@@ -28,7 +28,7 @@ export declare function privatizeNodeResponse<T extends ServerResponse>(res: T):
 
 export interface NodeGateOptions<E extends GateEnv = GateEnv> extends NodeRequestOptions {
   /** Where the keys live. Default: process.env. */
-  env?: E | undefined;
+  env?: E | NodeJS.ProcessEnv | undefined;
   /**
    * Developer machine only, never production: accept Cloudflare's test keys
    * and a loopback client address for a request from a loopback socket with

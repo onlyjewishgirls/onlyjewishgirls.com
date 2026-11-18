@@ -168,6 +168,19 @@ describe("CAPTCHA wall: nothing loads without a pass", () => {
     expect(appCalls).toEqual([]);
   });
 
+  it("plain http off localhost gets a bare 301/308 to https (kit 1.3.0), before the challenge and the app", async () => {
+    const http = (path: string, method = "GET") =>
+      handleRequest(captcha, app, new Request(`http://${HOST}${path}`, { method, headers: { host: HOST, "cf-connecting-ip": h.ip, "user-agent": UA } }), env(), ctx);
+    const get = await http("/login?next=%2Fhome");
+    expect(get.status).toBe(301);
+    expect(get.headers.get("location")).toBe(`https://${HOST}/login?next=%2Fhome`);
+    expect(await get.text()).toBe("");
+    const post = await http("/api/auth/login", "POST");
+    expect(post.status).toBe(308);
+    expect(post.headers.get("location")).toBe(`https://${HOST}/api/auth/login`);
+    expect(appCalls).toEqual([]);
+  });
+
   it("no machine client is exempt: nothing passes without a CAPTCHA", async () => {
     for (const [method, path] of [["GET", "/manifest.json"], ["POST", "/client/heartbeat"], ["GET", "/api/health"], ["POST", "/api/visit"]]) {
       const req = request(path, { method, body: method === "POST" ? "{}" : undefined });

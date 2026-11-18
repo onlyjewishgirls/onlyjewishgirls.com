@@ -7,7 +7,7 @@ Cloudflare Turnstile CAPTCHA. The only things that answer without a pass are
 the challenge page, `POST /__gate/verify`, and the machine clients a site names
 through the `exempt` hook.
 
-Kit version: `GATE_KIT_VERSION` in `gate.mjs` (1.2.0). What changed since 1.0.0, and
+Kit version: `GATE_KIT_VERSION` in `gate.mjs` (1.3.0). What changed since 1.0.0, and
 what a site must do about it: §10.
 
 ---
@@ -15,7 +15,8 @@ what a site must do about it: §10.
 ## 1. What to copy
 
 Copy the whole folder, unchanged, into the repo. Do not edit it per site; every
-site-specific thing goes through `createGate()` options.
+site-specific thing goes through `createGate()` options. Without `rsync`:
+`mkdir -p <dest> && tar -C /path/to/gate-kit --exclude=./screenshots -cf - . | tar -C <dest> -xf -`.
 
 | File | Needed by |
 |---|---|
@@ -741,6 +742,12 @@ from 127.0.0.1.
 
 ## 7. Owner setup checklist (per site, before merging: the wall fails closed)
 
+0. **Preview URLs bypass the wall.** Every older version and branch alias on
+   `*.workers.dev` keeps the code it was built with, so pre-wall previews keep
+   serving the whole site after the merge. Turn Preview URLs off for the Worker
+   (`"preview_urls": false` in the wrangler config, or Settings → Domains &
+   Routes → Preview URLs), or put Cloudflare Access in front of them.
+
 1. Cloudflare dashboard, Turnstile, **Add widget**. Mode: **Managed**. Name it
    after the site.
 2. Hostnames: every hostname the Worker answers on: apex, `www`, each
@@ -795,7 +802,7 @@ These follow directly from "nothing loads without a CAPTCHA":
 
 ## 9. Testing and screenshots in a repo
 
-- `node --test gate-kit/test/gate.test.mjs`: the kit's own suite (150 tests;
+- `node --test gate-kit/test/gate.test.mjs`: the kit's own suite (155 tests;
   Node 18, 20, 22 and 24). Add it to the repo's `npm test`. Set
   `TSC=node_modules/typescript/bin/tsc` to include the strict TypeScript
   compiles: a Worker with the DOM lib (`test/types/tsconfig.json`) and a
@@ -824,6 +831,25 @@ To update the kit later, re-copy the folder over the old one and check
 ---
 
 ## 10. Changes
+
+### 1.3.0 (2026-11-18)
+
+- **A valid pass wins over an exemption.** `handle()` checks the pass before
+  the `exempt` hook, so a passed browser on a machine-client route is ordinary
+  traffic (detection, alerts) and `exemptionOf()` is null for it.
+- **Browsers never ride an exemption.** A request with `Origin` or
+  `Sec-Fetch-Site` is never handed to `exempt`; native clients send neither.
+  This stops a third-party page from driving an exempted API (sign-in codes,
+  password guesses) through its visitors' browsers.
+- **http → https.** A plain-http request off loopback gets a bare 301
+  (GET/HEAD) or 308 to the same https URL before anything else: the Secure
+  `__Host-` pass can never be stored over http, so http visitors used to loop on
+  the challenge. Counted as `https_redirect`. Node: requests are https when the
+  socket is TLS, `trustCloudflare` is set or `protocol: 'https'` is passed.
+- **#fragments survive the challenge.** The page adds `location.hash` to the
+  return path, so console deep links (`/admin/#audit/3`) land where they point.
+- Types: `createNodeGate({ env: process.env })` compiles (`NodeJS.ProcessEnv`).
+- Docs: `tar` instead of `rsync` (§1); preview URLs bypass the wall (§7).
 
 ### 1.2.0 (2026-11-13)
 

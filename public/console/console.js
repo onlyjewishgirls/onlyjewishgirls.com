@@ -174,6 +174,12 @@
         var data = null;
         try { data = t ? JSON.parse(t) : {}; } catch (e) { data = null; }
         if (res.status === 401) { goLogin(); throw new ApiError(401, data); }
+        // The site's CAPTCHA pass expired (Gate kit): reload, so the challenge
+        // shows and then returns to this exact view (hash included).
+        if (res.status === 403 && data && data.code === 'captcha_required') {
+          try { location.reload(); } catch (e) { /* ignore */ }
+          throw new ApiError(403, data);
+        }
         if (!res.ok || !data || data.ok === false) {
           var err = new ApiError(res.status, data);
           if (err.code === 'csrf') showBanner('danger', 'This page lost its security token. Reload the page before doing anything else.');
@@ -2354,7 +2360,7 @@
     var rows = map(items, function (it) {
       var editable = canEdit && it.editable !== false && it.type !== 'readonly';
       var f = assign({}, it, { editable: editable });
-      var wide = it.type === 'text' || it.type === 'radio' || it.type === 'multiselect';
+      var wide = it.type === 'text' || it.type === 'radio' || it.type === 'multiselect' || it.type === 'readonly';
       var c, controlNode;
       if (it.type === 'bool') {
         if (save === 'item') {
@@ -2403,7 +2409,8 @@
     });
     var foot = null;
     if (save !== 'item' && canEdit && find(items, function (i) { return i.editable !== false && i.type !== 'readonly'; })) {
-      var saveBtn = btn('Save ' + str(g.label, 'settings').toLowerCase(), {});
+      var gl = str(g.label, 'settings');
+      var saveBtn = btn('Save ' + (/^[A-Z0-9]{2,}\b/.test(gl) ? gl : gl.charAt(0).toLowerCase() + gl.slice(1)), {});
       saveBtn.addEventListener('click', function () {
         var values = {}, changed = [];
         each(ctrls, function (c) {

@@ -736,6 +736,48 @@ describe('exempt hook (machine clients)', () => {
     assert.equal(gate.exemptionOf(undefined), null);
   });
 
+  test('a valid pass wins over an exemption: a passed browser on a client route is ordinary traffic', async () => {
+    let asked = 0;
+    const { gate } = makeGate({ exempt: (r, url) => { asked++; return url.pathname.startsWith('/client/') ? 'kidmonitor' : null; } });
+    const cookie = await passFor(gate);
+    const passed = req('/client/heartbeat', { cookie });
+    assert.equal(await gate.handle(passed, ENV), null);
+    assert.equal(gate.exemptionOf(passed), null);
+    assert.equal(asked, 0, 'the hook is not consulted when the pass is valid');
+    const bare = req('/client/heartbeat');
+    assert.equal(await gate.handle(bare, ENV), null);
+    assert.equal(gate.exemptionOf(bare), 'kidmonitor');
+  });
+
+  test('browsers never ride an exemption: Origin or Sec-Fetch-Site means the wall applies', async () => {
+    let asked = 0;
+    const { gate } = makeGate({ exempt: () => { asked++; return 'app'; } });
+    for (const headers of [{ origin: 'https://evil.example' }, { 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': 'same-origin' }, { origin: 'null' }]) {
+      const r = req('/api/auth/code', { method: 'POST', headers, body: '{}' });
+      assert.equal((await gate.handle(r, ENV)).status, 403, JSON.stringify(headers));
+      assert.equal(gate.exemptionOf(r), null);
+    }
+    assert.equal(asked, 0);
+    const native = req('/api/auth/code', { method: 'POST', body: '{}' });
+    assert.equal(await gate.handle(native, ENV), null);
+    assert.equal(gate.exemptionOf(native), 'app');
+  });
+
+  test('plain http off loopback is redirected to https before anything else; loopback http is not', async () => {
+    const { gate, sv } = makeGate({ exempt: (_r, url) => (url.pathname === '/client/x' ? 'kidmonitor' : null) });
+    const ex = await gate.handle(req('/client/x', { scheme: 'http' }), ENV);
+    assert.equal(ex.status, 301, 'even an exempted route is redirected, not answered over http');
+    const g = await gate.handle(req('/admin/?a=1', { scheme: 'http' }), ENV);
+    assert.equal(g.status, 301);
+    assert.equal(g.headers.get('location'), `https://${HOST}/admin/?a=1`);
+    assertGateHeaders(g);
+    const p = await gate.handle(new Request(`http://${HOST}${VERIFY_PATH}`, { method: 'POST', headers: { 'cf-connecting-ip': IP, 'content-type': 'application/x-www-form-urlencoded' }, body: 'token=x' }), ENV);
+    assert.equal(p.status, 308);
+    assert.equal(sv.calls.length, 0);
+    const local = await gate.handle(req('/', { scheme: 'http', host: 'localhost:8787', ip: '127.0.0.1', accept: HTML }), ENV);
+    assert.equal(local.status, 403, 'loopback dev keeps plain http');
+  });
+
   test('nothing else is exempt, and the verify path is never handed to the hook', async () => {
     let sawVerify = false;
     const { gate } = makeGate({ exempt: (_r, url) => { if (url.pathname === VERIFY_PATH) sawVerify = true; return url.pathname === VERIFY_PATH ? 'x' : null; } });
@@ -995,7 +1037,7 @@ describe('challenge page', () => {
 
 // Runs the page's own script against a small stand-in DOM, so its states can
 // be checked without a browser (demo/screenshots.mjs looks at the real thing).
-function runChallengeScript({ error = '' } = {}) {
+function runChallengeScript({ error = '', hash = '', withFields = false } = {}) {
   const html = renderChallengePage({ siteName: 'Example', siteDomain: 'example.com', siteKey: 'k', nonce: 'n', returnPath: '/x', error });
   const code = [...html.matchAll(/<script nonce="n">([\s\S]*?)<\/script>/g)].map((m) => m[1]).find((c) => c.includes('gate-form'));
   const el = (id, extra = {}) => ({
@@ -1004,7 +1046,7 @@ function runChallengeScript({ error = '' } = {}) {
   });
   const card = { className: error ? 'g-card g-failed' : 'g-card' };
   const els = {
-    'gate-form': el('gate-form', { parentNode: card, dataset: { sitekey: 'k', site: 'Example', ret: '/x', api: 'https://challenges.cloudflare.com/api.js', failed: error ? '1' : '0' }, submit() { this.submitted = true; } }),
+    'gate-form': el('gate-form', { parentNode: card, dataset: { sitekey: 'k', site: 'Example', ret: '/x', api: 'https://challenges.cloudflare.com/api.js', failed: error ? '1' : '0' }, ...(withFields ? { elements: { return: { value: '/x' } } } : {}), submit() { this.submitted = true; } }),
     'gate-widget': el('gate-widget', { hidden: Boolean(error) }),
     'gate-status': el('gate-status'),
     'gate-error': el('gate-error', { hidden: !error }),
@@ -1021,13 +1063,25 @@ function runChallengeScript({ error = '' } = {}) {
     document: { getElementById: (id) => els[id], createElement: () => ({}), head: { appendChild: (x) => scripts.push(x) } },
     setTimeout: (fn, ms) => timers.push({ fn, ms, cleared: false }),
     clearTimeout: (id) => { if (timers[id - 1]) timers[id - 1].cleared = true; },
-    location: { replace: (u) => replaced.push(u), reload() {} },
+    location: { hash, replace: (u) => replaced.push(u), reload() {} },
     history: { replaceState() {} },
   });
   return { els, scripts, timers, win, replaced, card, box: els['gate-widget'], err: els['gate-error'], status: els['gate-status'] };
 }
 
 describe('challenge page behaviour', () => {
+  test('the page keeps its #fragment in the return path when it submits (console deep links)', () => {
+    for (const [hash, want] of [['#audit/3', '/x#audit/3'], ['', '/x'], ['#', '/x'], ['#' + 'a'.repeat(3000), '/x']]) {
+      const p = runChallengeScript({ hash, withFields: true });
+      let opts = null;
+      p.win.turnstile = { render: (_box, o) => { opts = o; return 'w1'; }, reset() {} };
+      p.win.__gateTurnstileReady();
+      opts.callback('tok');
+      assert.equal(p.els['gate-form'].elements.return.value, want, JSON.stringify(hash.slice(0, 12)));
+      assert.equal(p.els['gate-form'].submitted, true);
+    }
+  });
+
   test('script blocked: the empty widget box is hidden, so no blank gap sits above the error', () => {
     const p = runChallengeScript();
     assert.equal(p.box.hidden, false);
@@ -1300,7 +1354,7 @@ describe('Node adapter (real http server)', () => {
 
   test('spoofed CF-Connecting-IP and X-Forwarded-For from an untrusted peer are ignored', async (t) => {
     for (const trustCloudflare of [false, ['127.0.0.1', '::1']]) {
-      const { server, port, sv } = await serve({ trustCloudflare }, { peer: '198.51.100.20' });
+      const { server, port, sv } = await serve({ trustCloudflare, protocol: 'https' }, { peer: '198.51.100.20' });
       t.after(() => server.close());
       const v = await raw(port, {
         method: 'POST', path: VERIFY_PATH,
@@ -1365,9 +1419,23 @@ describe('Node adapter (real http server)', () => {
     assert.equal(res.body, MSG_PRIVATE_CLIENT);
   });
 
+  test('plain http from a public client is sent to https (301 GET/HEAD, 308 otherwise), with no content and no pass', async (t) => {
+    const { server, port, sv, seen } = await serve({ trustCloudflare: false }, { peer: '198.51.100.30' });
+    t.after(() => server.close());
+    const g = await raw(port, { path: '/admin/x?y=1', headers: { ...H, accept: HTML } });
+    assert.equal(g.status, 301);
+    assert.equal(g.headers.location, 'https://portal.example.com/admin/x?y=1');
+    assert.equal(g.body, '');
+    const p = await raw(port, { method: 'POST', path: VERIFY_PATH, headers: { ...H, 'content-type': FORM }, body: verifyBody() });
+    assert.equal(p.status, 308);
+    assert.equal(p.headers['set-cookie'], undefined);
+    assert.equal(sv.calls.length, 0);
+    assert.equal(seen.length, 0);
+  });
+
   test('private, CGNAT, link-local and ULA peers are refused like loopback; a public peer gets the challenge', async (t) => {
     let current = '';
-    const { server, port } = await serve({ trustCloudflare: false }, { peer: () => current });
+    const { server, port } = await serve({ trustCloudflare: false, protocol: 'https' }, { peer: () => current });
     t.after(() => server.close());
     for (const p of ['10.0.0.5', '172.17.0.1', '192.168.1.10', '100.64.1.1', '169.254.1.1', 'fd00::1', 'fe80::1', '::1']) {
       current = p;

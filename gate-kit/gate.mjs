@@ -16,7 +16,7 @@
    machine-client exemptions and counters through the hooks.
    ========================================================================== */
 
-export const GATE_KIT_VERSION = '1.2.0';
+export const GATE_KIT_VERSION = '1.3.0';
 export const VERIFY_PATH = '/__gate/verify';
 export const PASS_COOKIE = '__Host-gate_pass';
 export const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
@@ -450,6 +450,13 @@ const CHALLENGE_JS = `
   var errText = document.getElementById('gate-error-text');
   var retry = document.getElementById('gate-retry');
   var tokenField = document.getElementById('gate-token');
+  // The server never sees #fragments (console deep links like /admin/#audit/3),
+  // so carry the page's own hash in the return path; safeReturnPath keeps it.
+  function keepHash() {
+    var rf = form.elements && form.elements['return'];
+    var h = String(location.hash || '');
+    if (rf && h.length > 1 && rf.value.indexOf('#') < 0 && (rf.value + h).length <= 2048) rf.value += h;
+  }
   var card = form.parentNode;
   var d = form.dataset;
   var widget = null, submitted = false, requested = false, loaded = false, timer = 0;
@@ -480,6 +487,7 @@ const CHALLENGE_JS = `
           submitted = true;
           err.hidden = true;
           tokenField.value = token;
+          keepHash();
           say('Verified. Loading ' + d.site + '\\u2026', true);
           form.submit();
         },
@@ -946,6 +954,17 @@ export function createGate(options = {}) {
         emit('gate_off', info, env, ctx);
         return null;
       }
+      // The pass is a Secure __Host- cookie, so a browser can never keep it
+      // over plain http: send http visitors (off loopback) to https first.
+      // No site content, no counters beyond 'https_redirect'.
+      if (url.protocol === 'http:' && !isLoopbackHost(url.host) && !isLoopbackIp(ip)) {
+        count('https_redirect');
+        const to = new URL(url.href);
+        to.protocol = 'https:';
+        to.port = '';
+        const m = request.method;
+        return new Response(null, { status: m === 'GET' || m === 'HEAD' ? 301 : 308, headers: baseHeaders({ Location: to.href }) });
+      }
       const local = isLocalDev(url, ip);
       const problem = configProblem(cfg, local);
       if (problem) {
@@ -954,7 +973,20 @@ export function createGate(options = {}) {
       }
       if (url.pathname === VERIFY_PATH) return await verify(request, url, cfg, info, env, ctx, local);
 
-      if (exempt) {
+      // A valid pass first: a passed browser is ordinary traffic (detection,
+      // alerts), never an exemption, even on a machine-client route.
+      const pass = await checkPass(request, cfg, info.host, ip);
+      if (pass.ok) {
+        count('passed');
+        return null;
+      }
+
+      // Machine clients (dart:io, .NET HttpClient, PowerShell) send neither
+      // header; every current browser sends Sec-Fetch-Site, and Origin on
+      // cross-site and non-GET requests. So a browser never rides an
+      // exemption, and a third-party page can't drive one through visitors.
+      const fromBrowser = request.headers.has('sec-fetch-site') || request.headers.has('origin');
+      if (exempt && !fromBrowser) {
         let name = null;
         try { name = await exempt(request, url, env); } catch { name = null; }
         if (name) {
@@ -963,12 +995,6 @@ export function createGate(options = {}) {
           emit('exempted', { ...info, exemption: label }, env, ctx);
           return null;
         }
-      }
-
-      const pass = await checkPass(request, cfg, info.host, ip);
-      if (pass.ok) {
-        count('passed');
-        return null;
       }
       if (isNavigation(request)) {
         emit('challenge_served', { ...info, reason: pass.reason }, env, ctx);
