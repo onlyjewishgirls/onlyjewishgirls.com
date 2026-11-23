@@ -72,7 +72,7 @@ export function StreakForm({ userId, username, count }: { userId: number; userna
           {busy ? "Saving…" : "Set"}
         </button>
       </div>
-      <p className="text-xs text-muted">0 resets it. Any other number counts today as checked in, so their 30-hour window starts now.</p>
+      <p className="text-xs text-muted">0 resets it. Any other number counts today as checked in, and the time they have to keep it starts again now.</p>
       <FormError message={error} />
     </form>
   );

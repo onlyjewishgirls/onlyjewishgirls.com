@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
+import { dueDayLabel } from "@/lib/streak/dates";
 import type { ActivityOutcome } from "@/lib/streak/engine";
 
 export interface StreakCardProps {
@@ -10,6 +11,12 @@ export interface StreakCardProps {
   /** Shabbat / Yom Tov periods the deadline was moved past. */
   leeway: { names: string[] }[];
   graceHours: number;
+  /** The user's own time zone: the one their streak days follow. */
+  timeZone: string;
+  /** With whole days: the local date the streak lasts until the end of ("YYYY-MM-DD"). */
+  dueDate: string | null;
+  /** Whole days in the user's time zone (Settings → Streaks); off = the 30-hour window. */
+  wholeDays: boolean;
   /** The streak change from today's first check-in. */
   today: { outcome: Exclude<ActivityOutcome, "same-day"> | "restored"; added: number; previousCount: number } | null;
   serverNow: number;
@@ -27,10 +34,12 @@ function formatRemaining(ms: number): string {
   return `${m}m ${String(s).padStart(2, "0")}s`;
 }
 
-function banner(today: StreakCardProps["today"]) {
+function banner(today: StreakCardProps["today"], dueDate: string | null) {
   switch (today?.outcome) {
     case "started":
-      return "Your streak has started! Check in again within 30 hours to keep it going.";
+      return dueDate
+        ? `Your streak has started! Keep it going: sign in by the end of ${dueDayLabel(dueDate)}.`
+        : "Your streak has started! Check in again within 30 hours to keep it going.";
     case "restored":
       return `Your ${today.previousCount}-day streak is restored. Welcome back!`;
     case "restarted":
@@ -80,10 +89,29 @@ export function StreakCard(props: StreakCardProps) {
       <p className="mt-1 text-lg font-semibold">{count === 1 ? "day" : "days"}</p>
 
       <p data-testid="streak-banner" className="mx-auto mt-4 max-w-md rounded-full bg-brand-soft px-4 py-1.5 text-sm">
-        {banner(props.today)}
+        {banner(props.today, alive ? props.dueDate : null)}
       </p>
 
-      {alive && props.deadline !== null ? (
+      {alive && props.deadline !== null && props.dueDate ? (
+        <div className={`mt-6 ${atRisk ? "text-danger" : ""}`} data-testid="streak-due">
+          <p className="text-sm text-muted">Keep it going: sign in by the end of</p>
+          <p className="text-2xl font-bold sm:text-3xl">{dueDayLabel(props.dueDate)}</p>
+          <p className="mt-1 text-sm text-muted" suppressHydrationWarning>
+            <span className="font-mono font-semibold tabular-nums">{formatRemaining(remaining!)}</span> left · until
+            midnight in{" "}
+            {/* Wraps only at the slash: "America/" "Los Angeles", never mid-word. */}
+            {props.timeZone
+              .replace(/_/g, " ")
+              .split("/")
+              .map((part, i, all) => (
+                <Fragment key={i}>
+                  <span className="whitespace-nowrap">{i < all.length - 1 ? `${part}/` : part}</span>
+                  {i < all.length - 1 && <wbr />}
+                </Fragment>
+              ))}
+          </p>
+        </div>
+      ) : alive && props.deadline !== null ? (
         <div className={`mt-6 ${atRisk ? "text-danger" : ""}`}>
           <p className="text-sm text-muted">Check in again within</p>
           <p className="font-mono text-3xl font-bold tabular-nums" suppressHydrationWarning>
@@ -91,12 +119,14 @@ export function StreakCard(props: StreakCardProps) {
           </p>
           <p className="mt-1 text-sm text-muted" suppressHydrationWarning>
             by{" "}
-            {new Date(props.deadline).toLocaleString(undefined, {
+            {new Date(props.deadline).toLocaleString("en-US", {
               weekday: "long",
               month: "short",
               day: "numeric",
               hour: "numeric",
               minute: "2-digit",
+              timeZone: props.timeZone,
+              timeZoneName: "short",
             })}
           </p>
         </div>
@@ -105,12 +135,18 @@ export function StreakCard(props: StreakCardProps) {
       )}
 
       {alive &&
-        props.leeway.map((l) => (
-          <p key={l.names.join()} className="mx-auto mt-3 max-w-md text-sm text-muted">
-            Moved past <strong>{l.names.join(" · ")}</strong>: your deadline is {props.graceHours} hours after it
-            ends, never during it.
-          </p>
-        ))}
+        props.leeway.map((l) =>
+          props.wholeDays ? (
+            <p key={l.names.join()} className="mx-auto mt-3 max-w-md text-sm text-muted">
+              No check-in needed on <strong>{l.names.join(" · ")}</strong>.
+            </p>
+          ) : (
+            <p key={l.names.join()} className="mx-auto mt-3 max-w-md text-sm text-muted">
+              Moved past <strong>{l.names.join(" · ")}</strong>: your deadline is {props.graceHours} hours after it
+              ends, never during it.
+            </p>
+          ),
+        )}
 
       <p className="mt-6 text-sm text-muted">
         Longest streak: <strong className="text-foreground">{props.longest}</strong> {props.longest === 1 ? "day" : "days"}

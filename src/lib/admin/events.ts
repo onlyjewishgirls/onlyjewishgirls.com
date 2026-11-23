@@ -43,6 +43,7 @@ export const EVENT_LABELS = {
   "admin.edit_profile": "Edited the profile",
   "admin.set_streak": "Changed the streak",
   "admin.set_note": "Updated the admin note",
+  "admin.set_time_zone": "Changed the time zone their streak days follow",
   "admin.set_temp_password": "Set a temporary password",
   "admin.create_account": "Created the account",
   "admin.revert": "Undid an admin change",

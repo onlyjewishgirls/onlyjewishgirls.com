@@ -19,7 +19,11 @@ export interface SettingDef {
 }
 
 export const SETTING_GROUPS = [
-  { key: "streaks", label: "Streaks", description: "Courtesy restores for people who lost their 🔥 streak." },
+  {
+    key: "streaks",
+    label: "Streaks",
+    description: "How the 🔥 streak is judged, and courtesy restores for people who lost theirs. Shabbat and Yom Tov are always grace days.",
+  },
   {
     key: "auto_block",
     label: "Auto-blacklist",
@@ -46,6 +50,24 @@ export const SETTINGS: SettingDef[] = [
     default: 3,
     min: 0,
     max: 31,
+  },
+  {
+    key: "streak_weekend_grace",
+    group: "streaks",
+    label: "Friday and Sunday are grace days",
+    description:
+      "On: the days people have to check in on are Monday to Thursday (minus Yom Tov). Skipping Friday or Sunday never breaks a streak, and checking in on one still counts a day. Off: only Shabbat and Yom Tov are grace days.",
+    type: "bool",
+    default: true,
+  },
+  {
+    key: "streak_calendar_days",
+    group: "streaks",
+    label: "Whole days in each person's time zone",
+    description:
+      "On: a streak lasts until the end of the next required day where the person is (any time Thursday, then any time Monday, keeps it), and never less than 30 hours. Off: 30 hours from the last check-in, moved past Shabbat and Yom Tov.",
+    type: "bool",
+    default: true,
   },
   {
     key: "auto_block_enabled",
@@ -183,7 +205,8 @@ export const SETTINGS: SettingDef[] = [
     key: "time_zone",
     group: "general",
     label: "Portal time zone",
-    description: "Used for calendar months (streak restores) and the times in alert emails.",
+    description:
+      "Used for calendar months (streak restores), the times in alert emails, and the streak days of anyone whose own time zone isn't known.",
     type: "timezone",
     default: "America/New_York",
   },
@@ -235,6 +258,8 @@ export function coerceSetting(def: SettingDef, raw: unknown): { ok: true; value:
 
 export interface Settings {
   streak_restores: number;
+  streak_weekend_grace: boolean;
+  streak_calendar_days: boolean;
   auto_block_enabled: boolean;
   auto_block_window_minutes: number;
   auto_block_failed_passwords: number;

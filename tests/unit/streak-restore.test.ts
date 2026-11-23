@@ -1,11 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { streakCalendar, type Place } from "@/lib/streak/calendar";
+import { DEFAULT_STREAK_RULES, HOUR_WINDOW_RULES, streakCalendar, type Place } from "@/lib/streak/calendar";
 import { recordActivity, type StreakState } from "@/lib/streak/engine";
 import { monthKey, restorePlan, setPlan } from "@/lib/streak/restore";
 import { call, h, makeUser, resetHarness, signInAs } from "./harness";
 
 const NY: Place = { timeZone: "America/New_York", israel: false, latitude: 40.7128, longitude: -74.006 };
-const ny = streakCalendar(NY);
+// These reason in hours (the 30-hour window), so weekend grace and whole days are off.
+const ny = streakCalendar(NY, HOUR_WINDOW_RULES);
 const t = (iso: string) => Date.parse(iso);
 const HOUR = 3_600_000;
 
@@ -44,6 +45,14 @@ describe("restorePlan / setPlan (ported from WAMV streak.js)", () => {
     expect(setPlan(live, 0, tue, "America/New_York")).toEqual({ count: 0, longest: 20, lastActivityAt: null, lastCountedDate: null, startedAt: null });
     expect(setPlan(live, 10_001, tue, "America/New_York")).toBeNull();
     expect(setPlan(live, 1.5, tue, "America/New_York")).toBeNull();
+  });
+
+  it("with weekend grace and whole days, Thursday's streak is still live on Monday and restorable on Tuesday", () => {
+    const cal = streakCalendar(NY, DEFAULT_STREAK_RULES);
+    const thu = t("2026-11-19T12:00:00-05:00");
+    const state: StreakState = { count: 8, longest: 8, lastActivityAt: thu, lastCountedDate: "2026-11-19", startedAt: thu };
+    expect(restorePlan(state, null, t("2026-11-23T23:00:00-05:00"), cal)).toBeNull();
+    expect(restorePlan(state, null, t("2026-11-24T09:00:00-05:00"), cal)).toMatchObject({ from: 0, to: 9 });
   });
 
   it("months are calendar months in the portal time zone", () => {

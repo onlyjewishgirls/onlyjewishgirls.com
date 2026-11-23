@@ -14,7 +14,7 @@ import { err, idParam, iso, json, need, pageParams, type ConsoleCtx } from "./co
 function category(type: string): string {
   if (type.startsWith("signin.") || type === "signout") return "auth";
   if (type.startsWith("mfa.") || type.startsWith("password.")) return "auth";
-  if (type.startsWith("streak.") || type === "admin.set_streak" || type === "admin.grant_restores") return "streaks";
+  if (type.startsWith("streak.") || type === "admin.set_streak" || type === "admin.grant_restores" || type === "admin.set_time_zone") return "streaks";
   if (type.startsWith("security.") || type.startsWith("admin.ip_")) return "security";
   if (type === "admin.settings" || type === "admin.alert_test") return "settings";
   if (type === "admin.set_role" || type === "admin.set_permissions") return "roles";
@@ -90,14 +90,14 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const CATEGORY_SQL: Record<string, string> = {
   auth: "(type LIKE 'signin.%' OR type = 'signout' OR type LIKE 'mfa.%' OR type LIKE 'password.%')",
-  streaks: "(type LIKE 'streak.%' OR type IN ('admin.set_streak', 'admin.grant_restores'))",
+  streaks: "(type LIKE 'streak.%' OR type IN ('admin.set_streak', 'admin.grant_restores', 'admin.set_time_zone'))",
   security: "(type LIKE 'security.%' OR type LIKE 'admin.ip_%')",
   settings: "type IN ('admin.settings', 'admin.alert_test')",
   roles: "type IN ('admin.set_role', 'admin.set_permissions')",
   sessions: "type IN ('admin.revoke_session', 'admin.sign_out_everywhere')",
   audit: "type = 'admin.revert'",
   people:
-    "(type LIKE 'admin.%' AND type NOT IN ('admin.set_streak','admin.grant_restores','admin.settings','admin.alert_test','admin.set_role','admin.set_permissions','admin.revoke_session','admin.sign_out_everywhere','admin.revert') AND type NOT LIKE 'admin.ip_%' OR type = 'account.created')",
+    "(type LIKE 'admin.%' AND type NOT IN ('admin.set_streak','admin.grant_restores','admin.set_time_zone','admin.settings','admin.alert_test','admin.set_role','admin.set_permissions','admin.revoke_session','admin.sign_out_everywhere','admin.revert') AND type NOT LIKE 'admin.ip_%' OR type = 'account.created')",
 };
 
 export async function listAudit(ctx: ConsoleCtx) {

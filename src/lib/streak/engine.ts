@@ -1,6 +1,13 @@
 /**
  * 🔥 Streak rules
  *
+ * 0. (Default, PORTAL-STANDARD §4 "Weekend grace and whole days".) Friday and
+ *    Sunday are grace days, like Shabbat and Yom Tov, so the required days are
+ *    Monday to Thursday minus Yom Tov. The streak lasts until the end of the
+ *    next required day in the user's own time zone, and never less than rules
+ *    1–2 give: check in any time Thursday, then any time Monday, and it holds.
+ *    Checking in on a grace day still counts a day; skipping one costs nothing.
+ *    Turning both settings off (HOUR_WINDOW_RULES) leaves exactly rules 1–4.
  * 1. Check in (sign in, or open the site while signed in) at least once every
  *    30 hours.
  * 2. The deadline never falls on Shabbat or Yom Tov, wherever the user is.
@@ -14,7 +21,7 @@
  */
 
 import type { HolyPeriod, StreakCalendar } from "./calendar";
-import { addDays, daysBetween, localDate } from "./dates";
+import { addDays, daysBetween, localDate, startOfDay } from "./dates";
 
 export const STREAK_WINDOW_HOURS = 30;
 /** Time guaranteed after Shabbat / Yom Tov ends to check in. */
@@ -22,8 +29,12 @@ export const AFTER_HOLY_DAY_HOURS = 12;
 export const AT_RISK_HOURS = 4;
 
 const HOUR_MS = 3_600_000;
-/** No run of Shabbat + Yom Tov is longer than 3 days; this just bounds the loops. */
-const MAX_BLOCK_DAYS = 7;
+/**
+ * No run of days without a required check-in is longer than 5 (Friday, Shabbat,
+ * Sunday, then a 2-day Yom Tov); this just bounds the loops, so a calendar
+ * mistake can't hand out unbounded leeway.
+ */
+const MAX_BLOCK_DAYS = 6;
 
 export interface StreakState {
   count: number;
@@ -44,12 +55,39 @@ export const EMPTY_STREAK: StreakState = {
 
 export interface Deadline {
   deadline: number;
-  /** Shabbat / Yom Tov periods that pushed the deadline later. */
+  /** Shabbat / Yom Tov (and grace day) periods that pushed the deadline later. */
   leeway: HolyPeriod[];
+  /**
+   * With whole days: the local date the deadline is the end of ("sign in by the
+   * end of Monday"). null when the hour window gave the later deadline.
+   */
+  dueDate: string | null;
+}
+
+/** The next date after `date` that needs a check-in. */
+export function nextRequiredDate(date: string, calendar: StreakCalendar): string {
+  for (let i = 1; i <= MAX_BLOCK_DAYS; i++) {
+    const next = addDays(date, i);
+    if (calendar.restricted(next).length === 0) return next;
+  }
+  // More days in a row than can happen: the calendar is wrong, so cap it.
+  return addDays(date, MAX_BLOCK_DAYS + 1);
 }
 
 /** When the streak expires if there is no check-in after `lastActivityAt`. */
 export function computeDeadline(lastActivityAt: number, calendar: StreakCalendar): Deadline {
+  const hours = hourWindowDeadline(lastActivityAt, calendar);
+  if (!calendar.rules.calendarDays) return { ...hours, dueDate: null };
+  const due = nextRequiredDate(localDate(lastActivityAt, calendar.timeZone), calendar);
+  const endOfDue = startOfDay(addDays(due, 1), calendar.timeZone) - 1;
+  if (endOfDue <= hours.deadline) return { ...hours, dueDate: null };
+  // Every grace period between now and the end of the due date explains why it's that far off.
+  const leeway = calendar.periods(lastActivityAt, endOfDue).filter((p) => p.end > lastActivityAt && p.start <= endOfDue);
+  return { deadline: endOfDue, leeway, dueDate: due };
+}
+
+/** Rules 1–2: 30 hours, moved past Shabbat / Yom Tov (and grace days) that come within it. */
+function hourWindowDeadline(lastActivityAt: number, calendar: StreakCalendar): Omit<Deadline, "dueDate"> {
   let deadline = lastActivityAt + STREAK_WINDOW_HOURS * HOUR_MS;
   const leeway: HolyPeriod[] = [];
   // Pushing the deadline can bring another period into range, so repeat until stable.
@@ -143,6 +181,8 @@ export interface StreakStatus {
   atRisk: boolean;
   checkedInToday: boolean;
   leeway: HolyPeriod[];
+  /** The local date the deadline is the end of, with whole days; else null. */
+  dueDate: string | null;
 }
 
 export function getStreakStatus(state: StreakState, now: number, calendar: StreakCalendar): StreakStatus {
@@ -156,9 +196,10 @@ export function getStreakStatus(state: StreakState, now: number, calendar: Strea
       atRisk: false,
       checkedInToday: false,
       leeway: [],
+      dueDate: null,
     };
   }
-  const { deadline, leeway } = computeDeadline(state.lastActivityAt, calendar);
+  const { deadline, leeway, dueDate } = computeDeadline(state.lastActivityAt, calendar);
   const remainingMs = deadline - now;
   const alive = remainingMs >= 0;
   return {
@@ -170,5 +211,6 @@ export function getStreakStatus(state: StreakState, now: number, calendar: Strea
     atRisk: alive && remainingMs < AT_RISK_HOURS * HOUR_MS,
     checkedInToday: state.lastCountedDate === localDate(now, calendar.timeZone),
     leeway,
+    dueDate,
   };
 }

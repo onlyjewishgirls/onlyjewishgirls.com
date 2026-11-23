@@ -47,6 +47,7 @@ export const ADMIN_ACTIONS = [
   "grant_restores",
   "send_email",
   "toggle_email_otp",
+  "set_time_zone",
 ] as const;
 export type AdminAction = (typeof ADMIN_ACTIONS)[number];
 
@@ -83,7 +84,8 @@ export type ExtraPermission = keyof typeof EXTRA_PERMISSIONS;
 export const isExtraPermission = (v: unknown): v is ExtraPermission =>
   typeof v === "string" && Object.hasOwn(EXTRA_PERMISSIONS, v);
 
-const STREAK_ACTIONS = new Set<AdminAction>(["set_streak", "grant_restores"]);
+// A person's time zone decides where their streak days start and end, so changing it is a streak action.
+const STREAK_ACTIONS = new Set<AdminAction>(["set_streak", "grant_restores", "set_time_zone"]);
 
 interface Account {
   id: number;

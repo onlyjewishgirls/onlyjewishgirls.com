@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { isAdminRole } from "@/lib/admin/permissions";
-import { isValidTimeZone } from "@/lib/streak/dates";
+import { validTimeZone } from "@/lib/streak/dates";
 import { isUnblockableIp } from "@/lib/security";
 import { looksLikeLoginName } from "@/lib/validation";
 import { sha256 } from "@/server/crypto";
@@ -15,7 +15,8 @@ import { startSession } from "@/server/session";
 import { getSettings } from "@/server/settings";
 import { recordStrike, strikeCounts } from "@/server/threat";
 import { first } from "@/server/db";
-import { findUserByLogin, updateTimeZone } from "@/server/users";
+import { captureTimeZone } from "@/server/location";
+import { findUserByLogin } from "@/server/users";
 
 /**
  * Sign-in, step 1: identifier + password together. Every refusal says exactly
@@ -31,7 +32,7 @@ export const POST = api(async (req) => {
   if (!identifier) return fail(400, "validation", "Enter your username or email.", "identifier");
   if (!password) return fail(400, "validation", "Enter your password.", "password");
   const ip = clientIp(req);
-  const timeZone = isValidTimeZone(str(body.timeZone)) ? str(body.timeZone) : null;
+  const timeZone = validTimeZone(body.timeZone);
 
   const settings = await getSettings();
   if (settings.allowlist_mode === "everyone" && !(await isAllowlisted(ip))) {
@@ -128,7 +129,7 @@ export const POST = api(async (req) => {
   }
 
   await resetRateLimit(accountKey);
-  if (timeZone && timeZone !== user.timeZone) await updateTimeZone(user.id, timeZone);
+  await captureTimeZone(user, timeZone);
 
   await startSession(user.id, "password");
   await logEvent("signin.password", { user });

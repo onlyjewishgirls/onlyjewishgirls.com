@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import parseMax from "libphonenumber-js/max";
 import { NextResponse } from "next/server";
 import { checkPassword, passwordIsValid } from "@/lib/password/policy";
-import { isValidTimeZone } from "@/lib/streak/dates";
+import { validTimeZone } from "@/lib/streak/dates";
 import {
   normalizeEmail,
   normalizeName,
@@ -16,6 +16,7 @@ import { api, clientIp, jsonError, readJson, str, tooManyRequests } from "@/serv
 import { hashPassword } from "@/server/passwords";
 import { rateLimit } from "@/server/rate-limit";
 import { startSession } from "@/server/session";
+import { getSettings } from "@/server/settings";
 import { createUser, emailTaken, usernameTaken } from "@/server/users";
 
 export const POST = api(async (req) => {
@@ -69,7 +70,8 @@ export const POST = api(async (req) => {
         username: input.username,
         phone: phone.number,
         passwordHash: await hashPassword(input.password),
-        timeZone: isValidTimeZone(input.timeZone) ? input.timeZone : "UTC",
+        // Unknown until the browser says: the portal's zone, not UTC.
+        timeZone: validTimeZone(input.timeZone) ?? (await getSettings()).time_zone,
         webauthnUserId: randomBytes(32).toString("base64url"),
       },
       now,

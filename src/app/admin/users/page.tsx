@@ -3,6 +3,7 @@ import Link from "next/link";
 import { AccountBadges } from "@/components/admin/AccountBadges";
 import { AccountsToolbar } from "@/components/admin/AccountsToolbar";
 import { fullName, timeAgo } from "@/lib/admin/format";
+import { getSettings } from "@/server/settings";
 import {
   isUserFilter,
   isUserSort,
@@ -22,6 +23,7 @@ const one = (v: string | string[] | undefined) => (typeof v === "string" ? v : u
 
 export default async function AdminUsersPage({ searchParams }: { searchParams: Promise<Search> }) {
   const { user: viewer, now } = await requireAdminPage();
+  const settings = await getSettings();
   const params = await searchParams;
   const q = one(params.q)?.slice(0, 100) ?? "";
   const filter = one(params.filter);
@@ -99,7 +101,7 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
       {result.users.length > 0 && (
         <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface" data-testid="account-list">
           {result.users.map(({ user: u, passkeys }) => {
-            const streak = streakStatusFor(u, now);
+            const streak = streakStatusFor(u, settings, now);
             const complete = passkeys > 0 && u.totpEnabledAt !== null && u.recoveryCodesCreatedAt !== null;
             return (
               <li key={u.id}>

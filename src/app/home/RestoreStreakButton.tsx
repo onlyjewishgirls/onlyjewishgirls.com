@@ -5,7 +5,18 @@ import { useState } from "react";
 import { FormError } from "@/components/AuthCard";
 import { postJson } from "@/lib/api-client";
 
-export function RestoreStreakButton({ to, left, allowance }: { to: number; left: number; allowance: number }) {
+export function RestoreStreakButton({
+  to,
+  left,
+  allowance,
+  until,
+}: {
+  to: number;
+  left: number;
+  allowance: number;
+  /** With whole days: the day a restored streak then has to be kept by ("Monday, Nov 23"). */
+  until?: string | null;
+}) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +39,9 @@ export function RestoreStreakButton({ to, left, allowance }: { to: number; left:
       <button type="button" className="btn-primary w-full py-3" onClick={restore} disabled={busy || left === 0}>
         {busy ? "Restoring…" : `Restore my streak (${left} of ${allowance} left this month)`}
       </button>
-      <p className="text-xs text-muted">Puts your streak back to {to} days.</p>
+      <p className="text-xs text-muted">
+        Puts your streak back to {to} days{until ? `. Then keep it going: sign in by the end of ${until}.` : "."}
+      </p>
       <FormError message={error} />
     </div>
   );

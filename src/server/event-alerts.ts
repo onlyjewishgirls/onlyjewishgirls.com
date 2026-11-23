@@ -60,6 +60,7 @@ const ALERTS: Partial<Record<EventType, AlertEvent>> = {
   "security.decoy": "decoy_hit",
   "security.admin_denied": "admin_access_denied",
   "admin.set_streak": "streak_set",
+  "admin.set_time_zone": "streak_set",
   "admin.settings": "settings_changed",
   // security.auto_blocked and security.hostile send their own, richer alerts (threat.ts).
 };

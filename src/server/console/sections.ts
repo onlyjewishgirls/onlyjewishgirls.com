@@ -313,7 +313,7 @@ export async function streaks(ctx: ConsoleCtx) {
   const items = rows
     .map((row) => {
       const u = toUser(row)!;
-      const s = streakStatusOf(u, ctx.now);
+      const s = streakStatusOf(u, settings, ctx.now);
       const allowance = settings.streak_restores === 0 ? row.extra : settings.streak_restores + row.extra;
       return {
         person: personRef(u),
@@ -323,7 +323,7 @@ export async function streaks(ctx: ConsoleCtx) {
         hours_left: s.remainingMs === null ? null : Math.round((s.remainingMs / 3_600_000) * 10) / 10,
         restores_used: row.used,
         restores_left: Math.max(0, allowance - row.used),
-        restore_to: currentRestorePlan(u, ctx.now)?.to ?? null,
+        restore_to: currentRestorePlan(u, settings, ctx.now)?.to ?? null,
       };
     })
     .sort((a, b) => b.current - a.current || b.longest - a.longest)

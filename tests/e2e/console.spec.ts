@@ -71,6 +71,23 @@ test("the admin console is the Console kit, with this site's features", async ({
       .toEqual(["failed"]);
   });
 
+  await test.step("the record shows the person's streak time zone, and the owner can change it (audited)", async () => {
+    await page.goto(`/admin#people/${ownerId}`);
+    await page.getByRole("tab", { name: "Profile" }).click();
+    const zone = page.getByLabel("Time zone (streak days)");
+    await expect(zone).toHaveValue("America/New_York");
+    await zone.selectOption("Asia/Jerusalem");
+    await page.getByRole("button", { name: "Save details" }).click();
+    await expect(page.getByText("Saved 1 change.").first()).toBeVisible();
+    expect(query<{ time_zone: string }>(`SELECT time_zone FROM users WHERE id = ${ownerId}`)[0].time_zone).toBe("Asia/Jerusalem");
+    const ev = query<{ detail: string }>("SELECT detail FROM events WHERE type = 'admin.set_time_zone'");
+    expect(ev.map((e) => JSON.parse(e.detail))).toEqual([{ from: "America/New_York", to: "Asia/Jerusalem" }]);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await screenshot(page, "console-5-time-zone");
+    // Put it back for the steps that follow.
+    sql(`UPDATE users SET time_zone = 'America/New_York' WHERE id = ${ownerId}`);
+  });
+
   await test.step("the country rule is the Countries part of the IP allowlist page (§9)", async () => {
     await page.goto("/admin#ips");
     await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();

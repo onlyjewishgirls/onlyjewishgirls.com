@@ -6,6 +6,7 @@ import { recordStrike } from "./threat";
 import { canEnroll, mfaState, nextStep, type MfaState } from "./mfa";
 import { isRateLimited, rateLimit } from "./rate-limit";
 import { logEvent } from "./events";
+import { captureTimeZone } from "./location";
 import { getAuth, MAX_MFA_FAILURES, recentlyVerified, recordMfaFailure, startSession, type AuthContext } from "./session";
 import { findUserById, setLastLogin } from "./users";
 
@@ -71,6 +72,7 @@ async function nextAfterFullSignIn(userId: number) {
 /** Upgrades to a fully signed-in session and tells the browser where to go next. */
 export async function completeSecondFactor(ctx: AuthContext, method: SecondFactor, extra: Record<string, unknown> = {}) {
   const now = Date.now();
+  await captureTimeZone(ctx.user);
   await startSession(ctx.user.id, "full", now);
   await setLastLogin(ctx.user.id, now);
   await logEvent("signin.complete", { user: ctx.user, detail: { method }, now });
