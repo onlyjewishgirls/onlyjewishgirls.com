@@ -57,7 +57,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
 
   return (
     <div className="space-y-5">
-      <Link href="/admin/users" className="link text-sm">
+      <Link href="/admin/users" className="link text-sm" data-export-skip="">
         ← Accounts
       </Link>
 
@@ -99,7 +99,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
       )}
 
       {allowed.size > 0 && (
-        <section aria-label="Actions" className="panel">
+        <section aria-label="Actions" className="panel" data-export-skip="">
           <h2 className="mb-3 font-semibold">Actions</h2>
           <div className="flex flex-wrap gap-2">
             {may("suspend") && !suspended && (
@@ -207,7 +207,12 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
               ["Role", ROLE_LABELS[u.role]],
               ["Joined", formatDateTime(u.createdAt, tz)],
               ["Last sign-in", `${timeAgo(u.lastLoginAt, now, tz)}${u.lastLoginAt ? ` (${formatDateTime(u.lastLoginAt, tz)})` : ""}`],
-              ["Last active", timeAgo(u.streak.lastActivityAt, now, tz)],
+              [
+                "Last active",
+                <span key="a" data-export-text={u.streak.lastActivityAt ? formatDateTime(u.streak.lastActivityAt, tz) : "Never"}>
+                  {timeAgo(u.streak.lastActivityAt, now, tz)}
+                </span>,
+              ],
               ["Time zone", u.timeZone],
               ["Location", countryName(u.country) ?? "Unknown"],
               ["Failed sign-ins (24 h)", String(failedSignIns24h)],
@@ -232,7 +237,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
             ]}
           />
           {may("set_streak") && (
-            <div className="mt-4 border-t border-border pt-4">
+            <div className="mt-4 border-t border-border pt-4" data-export-skip="">
               <StreakForm userId={u.id} username={u.username} count={u.streak.count} />
             </div>
           )}
@@ -245,16 +250,19 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
               {passkeys.length === 0 ? (
                 <p className="text-muted">None.</p>
               ) : (
-                <ul className="mt-1 divide-y divide-border">
+                <ul className="mt-1 divide-y divide-border" aria-label="Passkeys">
                   {passkeys.map((p) => (
                     <li key={p.id} className="flex items-center gap-3 py-2">
                       <span className="min-w-0 flex-1">
-                        <span className="block">
+                        <span className="block" data-export-col="Passkey">
                           {p.deviceType === "multiDevice" ? "Synced passkey" : "Device-bound passkey"}
                           {p.backedUp ? " · backed up" : ""}
                         </span>
                         <span className="block text-xs text-muted">
-                          Added {formatDate(p.createdAt, tz)} · last used {timeAgo(p.lastUsedAt, now, tz)}
+                          Added <span data-export-col="Added">{formatDate(p.createdAt, tz)}</span> · last used{" "}
+                          <span data-export-col="Last used" data-export-text={p.lastUsedAt ? formatDateTime(p.lastUsedAt, tz) : "Never"}>
+                            {timeAgo(p.lastUsedAt, now, tz)}
+                          </span>
                         </span>
                       </span>
                       {may("remove_passkey") && (
@@ -324,22 +332,37 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
           {sessions.length === 0 ? (
             <p className="text-sm text-muted">Not signed in anywhere.</p>
           ) : (
-            <ul className="divide-y divide-border text-sm" data-testid="session-list">
+            <ul className="divide-y divide-border text-sm" data-testid="session-list" aria-label="Signed-in devices">
               {sessions.map((s) => {
                 const here = s.idHash === viewerSession.idHash;
                 return (
                   <li key={s.idHash} className="flex items-center gap-3 py-2">
                     <span className="min-w-0 flex-1">
                       <span className="block font-medium">
-                        {describeDevice(s.userAgent)}
-                        {here && <span className="ml-2 badge">This device</span>}
-                        {s.stage === "password" && <span className="ml-2 badge text-muted">Signing in</span>}
+                        <span data-export-col="Device">{describeDevice(s.userAgent)}</span>
+                        {here && (
+                          <span className="ml-2 badge" data-export-col="Note">
+                            This device
+                          </span>
+                        )}
+                        {s.stage === "password" && (
+                          <span className="ml-2 badge text-muted" data-export-col="Note">
+                            Signing in
+                          </span>
+                        )}
                       </span>
-                      <span className="block text-xs break-words text-muted">
+                      <span className="block text-xs break-words text-muted" data-export-col="Where">
                         {[s.city, countryName(s.country), s.ip].filter(Boolean).join(" · ") || "Unknown location"}
                       </span>
                       <span className="block text-xs text-muted">
-                        Signed in {timeAgo(s.createdAt, now, tz)} · active {timeAgo(s.lastSeenAt, now, tz)}
+                        Signed in{" "}
+                        <span data-export-col="Signed in" data-export-text={formatDateTime(s.createdAt, tz)}>
+                          {timeAgo(s.createdAt, now, tz)}
+                        </span>{" "}
+                        · active{" "}
+                        <span data-export-col="Last active" data-export-text={formatDateTime(s.lastSeenAt, tz)}>
+                          {timeAgo(s.lastSeenAt, now, tz)}
+                        </span>
                       </span>
                     </span>
                     {may("revoke_session") && !here && (
@@ -354,7 +377,7 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
       </div>
 
       {(may("edit_profile") || may("set_note") || may("set_role")) && (
-        <section className="panel space-y-6" aria-labelledby="manage-title">
+        <section className="panel space-y-6" aria-labelledby="manage-title" data-export-skip="">
           <h2 id="manage-title" className="font-semibold">
             Edit
           </h2>
@@ -386,11 +409,11 @@ export default async function AdminUserPage({ params }: { params: Promise<{ id: 
       <Panel title="Activity" id="activity">
         <EventList events={events} timeZone={tz} now={now} canUndo={viewer.role === "owner"} empty="No activity yet." />
         {events.length >= 100 && (
-          <Link href={`/admin/activity?user=${u.id}`} className="link mt-3 inline-block text-sm">
+          <Link href={`/admin/activity?user=${u.id}`} className="link mt-3 inline-block text-sm" data-export-skip="">
             See older activity
           </Link>
         )}
-        <Link href={`/admin/visitors?user=${u.id}&range=month`} className="link mt-3 block text-sm">
+        <Link href={`/admin/visitors?user=${u.id}&range=month`} className="link mt-3 block text-sm" data-export-skip="">
           Pages they visited
         </Link>
       </Panel>

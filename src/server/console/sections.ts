@@ -52,6 +52,7 @@ export const FEATURES = {
   people_disable: false,
   mfa_email_toggle: false, // set per request in bootstrap: on when email is configured
   mfa_require: false, // two-step is mandatory for everyone
+  export_audit: true, // POST /exports writes an `export` audit entry (PORTAL-STANDARD §11)
   access_requests: false,
   roles_rank: false,
   streak_restores: true,

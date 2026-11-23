@@ -63,4 +63,6 @@ export const ROUTES: Route[] = [
   { method: "GET", pattern: "audit/:id", handler: records.getAudit },
   { method: "POST", pattern: "audit/:id/revert", handler: records.revertAudit, write: true },
   { method: "GET", pattern: "alerts", handler: records.listAlertsRoute },
+  // Not `write`: exporting only reads, so it needs no step-up; CSRF and sign-in still apply.
+  { method: "POST", pattern: "exports", handler: records.recordExport },
 ];

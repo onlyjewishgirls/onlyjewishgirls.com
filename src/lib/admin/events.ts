@@ -65,6 +65,7 @@ export const EVENT_LABELS = {
   "admin.ip_deny_update": "Edited a deny-list entry",
   "admin.ip_unblock": "Unblocked an IP address",
   "admin.country_rule": "Changed the country rule",
+  export: "Exported a section",
   "security.admin_denied": "Refused: admin area without permission",
   "security.auto_blocked": "IP auto-blacklisted",
   "security.auto_block_skipped": "Would have auto-blacklisted (local address)",
@@ -77,6 +78,13 @@ export type EventType = keyof typeof EVENT_LABELS;
 
 export function eventLabel(type: string): string {
   return (EVENT_LABELS as Record<string, string>)[type] ?? type;
+}
+
+/** "Exported People as PDF (17 rows)": the audit line for an export (PORTAL-STANDARD §11). */
+export function exportSentence(d: Record<string, unknown>): string {
+  const what = typeof d.title === "string" && d.title ? d.title : String(d.section ?? "a section");
+  const rows = typeof d.rows === "number" ? d.rows : 0;
+  return `Exported ${what} as ${String(d.format ?? "").toUpperCase()} (${rows} row${rows === 1 ? "" : "s"})`;
 }
 
 /** Filters on the activity page. */

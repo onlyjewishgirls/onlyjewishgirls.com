@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AccountBadges } from "@/components/admin/AccountBadges";
 import { AccountsToolbar } from "@/components/admin/AccountsToolbar";
-import { fullName, timeAgo } from "@/lib/admin/format";
+import { formatDateTime, fullName, timeAgo } from "@/lib/admin/format";
+import { ROLE_LABELS } from "@/lib/admin/permissions";
 import { getSettings } from "@/server/settings";
 import {
   isUserFilter,
@@ -99,10 +100,23 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
       </p>
 
       {result.users.length > 0 && (
-        <ul className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface" data-testid="account-list">
+        <ul
+          className="divide-y divide-border overflow-hidden rounded-2xl border border-border bg-surface"
+          data-testid="account-list"
+          aria-label="Accounts"
+        >
           {result.users.map(({ user: u, passkeys }) => {
             const streak = streakStatusFor(u, settings, now);
             const complete = passkeys > 0 && u.totpEnabledAt !== null && u.recoveryCodesCreatedAt !== null;
+            const status =
+              [
+                u.role !== "member" && ROLE_LABELS[u.role],
+                u.suspendedAt !== null && "Suspended",
+                !complete && "Two-step not finished",
+                u.mustChangePassword && "Temporary password",
+              ]
+                .filter(Boolean)
+                .join(", ") || "Member";
             return (
               <li key={u.id}>
                 <Link href={`/admin/users/${u.id}`} className="flex items-center gap-3 px-4 py-3 transition hover:bg-brand-soft/50">
@@ -115,11 +129,17 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="font-semibold">{u.username}</span>
-                      <span className="truncate text-sm text-muted">{fullName(u)}</span>
+                      <span className="font-semibold" data-export-col="Username">
+                        {u.username}
+                      </span>
+                      <span className="truncate text-sm text-muted" data-export-col="Name">
+                        {fullName(u)}
+                      </span>
                     </span>
-                    <span className="block truncate text-sm text-muted">{u.email}</span>
-                    <span className="mt-1 block">
+                    <span className="block truncate text-sm text-muted" data-export-col="Email">
+                      {u.email}
+                    </span>
+                    <span className="mt-1 block" data-export-col="Status" data-export-text={status}>
                       <AccountBadges
                         role={u.role}
                         suspended={u.suspendedAt !== null}
@@ -129,10 +149,18 @@ export default async function AdminUsersPage({ searchParams }: { searchParams: P
                     </span>
                   </span>
                   <span className="shrink-0 text-right text-xs text-muted">
-                    <span className="block text-sm font-semibold text-foreground">
+                    <span
+                      className="block text-sm font-semibold text-foreground"
+                      data-export-col="Streak"
+                      data-export-text={`${streak.count}${streak.alive ? (streak.atRisk ? " (at risk)" : " (live)") : ""}`}
+                    >
                       {streak.count} {streak.alive ? (streak.atRisk ? "⌛" : "🔥") : ""}
                     </span>
-                    <span className="block">
+                    <span
+                      className="block"
+                      data-export-col="Last sign-in"
+                      data-export-text={u.lastLoginAt === null ? "Never" : formatDateTime(u.lastLoginAt, viewer.timeZone)}
+                    >
                       {u.lastLoginAt === null ? "Never signed in" : `Signed in ${timeAgo(u.lastLoginAt, now, viewer.timeZone)}`}
                     </span>
                   </span>

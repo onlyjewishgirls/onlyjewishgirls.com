@@ -52,7 +52,7 @@ export default async function AdminOverviewPage() {
                 {w.text}
               </p>
               {w.href && (
-                <Link href={w.href} className="link shrink-0">
+                <Link href={w.href} className="link shrink-0" data-export-skip="">
                   View
                 </Link>
               )}
@@ -120,15 +120,25 @@ export default async function AdminOverviewPage() {
           {stats.topStreaks.length === 0 ? (
             <p className="text-sm text-muted">No live streaks right now.</p>
           ) : (
-            <ol className="space-y-2 text-sm">
+            <ol className="space-y-2 text-sm" aria-label="Longest live streaks">
               {stats.topStreaks.map(({ user: u, status }, i) => (
                 <li key={u.id} className="flex items-center gap-3">
-                  <span className="tabular w-5 text-muted">{i + 1}.</span>
+                  <span className="tabular w-5 text-muted" data-export-col="Rank" data-export-text={String(i + 1)}>
+                    {i + 1}.
+                  </span>
                   <Link href={`/admin/users/${u.id}`} className="min-w-0 flex-1 truncate hover:underline">
-                    <span className="font-medium">{u.username}</span>{" "}
-                    <span className="text-muted">{fullName(u)}</span>
+                    <span className="font-medium" data-export-col="Username">
+                      {u.username}
+                    </span>{" "}
+                    <span className="text-muted" data-export-col="Name">
+                      {fullName(u)}
+                    </span>
                   </Link>
-                  <span className="tabular font-semibold">
+                  <span
+                    className="tabular font-semibold"
+                    data-export-col="Streak"
+                    data-export-text={`${status.count}${status.atRisk ? " (at risk)" : ""}`}
+                  >
                     {status.count} {status.atRisk ? "⌛" : "🔥"}
                   </span>
                 </li>
@@ -142,7 +152,7 @@ export default async function AdminOverviewPage() {
             <h2 id="recent-title" className="font-semibold">
               Recent activity
             </h2>
-            <Link href="/admin/activity" className="link text-sm">
+            <Link href="/admin/activity" className="link text-sm" data-export-skip="">
               See all
             </Link>
           </div>

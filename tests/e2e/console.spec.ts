@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { E2E_ORIGIN } from "../../playwright.config";
 import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, query, screenshot, sql } from "./helpers";
@@ -108,6 +109,24 @@ test("the admin console is the Console kit, with this site's features", async ({
       headers: { "X-Requested-With": "console", Origin: E2E_ORIGIN },
       data: { mode: "off", countries: [] },
     });
+  });
+
+  await test.step("every section exports TXT, JSON, CSV, DOCX, PDF and HTML, and each export is audited (§11)", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/admin#people");
+    const button = page.getByRole("button", { name: "Export", exact: true }).first();
+    await expect(button).toBeVisible();
+    await button.click();
+    const items = page.getByRole("menuitem");
+    await expect(items).toHaveText([/^Text/, /^JSON/, /^CSV/, /^Word/, /^PDF/, /^HTML/]);
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("menuitem", { name: /CSV/ }).click()]);
+    expect(download.suggestedFilename()).toMatch(/^onlyjewishgirls-people-\d{4}-\d{2}-\d{2}\.csv$/);
+    const csv = readFileSync((await download.path())!, "utf8");
+    expect(csv).toContain(owner.username);
+    await expect
+      .poll(() => query<{ detail: string }>("SELECT detail FROM events WHERE type = 'export'").map((r) => JSON.parse(r.detail)))
+      .toContainEqual(expect.objectContaining({ section: "people", title: "People", format: "csv" }));
+    expect(query("SELECT * FROM security_alerts WHERE event LIKE '%export%'")).toEqual([]);
   });
 
   await test.step("phone width: the sidebar becomes a drawer and nothing scrolls sideways", async () => {

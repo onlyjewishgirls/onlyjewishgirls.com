@@ -19,8 +19,11 @@ function TopList({
   href,
   format = (label) => label,
   mono = false,
+  column,
 }: {
   title: string;
+  /** Export column name for the label. */
+  column: string;
   items: Ranked[];
   href: (label: string) => string;
   format?: (label: string) => string;
@@ -33,7 +36,7 @@ function TopList({
       {items.length === 0 ? (
         <p className="text-sm text-muted">None yet.</p>
       ) : (
-        <ol className="space-y-1.5 text-sm">
+        <ol className="space-y-1.5 text-sm" aria-label={title}>
           {items.map((item) => (
             <li key={item.label} className="relative">
               <span
@@ -42,8 +45,12 @@ function TopList({
                 style={{ width: `${(item.count / max) * 100}%` }}
               />
               <Link href={href(item.label)} className="relative flex items-center justify-between gap-3 px-2 py-1 hover:underline">
-                <span className={`min-w-0 truncate ${mono ? "font-mono text-xs" : ""}`}>{format(item.label)}</span>
-                <span className="tabular shrink-0 text-muted">{compactNumber(item.count)}</span>
+                <span className={`min-w-0 truncate ${mono ? "font-mono text-xs" : ""}`} data-export-col={column}>
+                  {format(item.label)}
+                </span>
+                <span className="tabular shrink-0 text-muted" data-export-col="Count" data-export-text={String(item.count)}>
+                  {compactNumber(item.count)}
+                </span>
               </Link>
             </li>
           ))}
@@ -167,10 +174,10 @@ export default async function AdminVisitorsPage({ searchParams }: { searchParams
       <DailyBars title="Visitors per day (last 30 days, not counting bots)" unit="visitors" data={summary.visitorsByDay} />
 
       <div className="grid gap-3 md:grid-cols-2">
-        <TopList title="Top pages" items={summary.topPages} href={search} mono />
-        <TopList title="Countries" items={summary.topCountries} href={search} format={(c) => countryName(c) ?? c} />
-        <TopList title="Came from" items={summary.topReferrers} href={search} />
-        <TopList title="Networks" items={summary.topNetworks} href={search} />
+        <TopList title="Top pages" column="Page" items={summary.topPages} href={search} mono />
+        <TopList title="Countries" column="Country" items={summary.topCountries} href={search} format={(c) => countryName(c) ?? c} />
+        <TopList title="Came from" column="Referrer" items={summary.topReferrers} href={search} />
+        <TopList title="Networks" column="Network" items={summary.topNetworks} href={search} />
       </div>
 
       <section className="panel" aria-label="Visitor log">
@@ -178,58 +185,90 @@ export default async function AdminVisitorsPage({ searchParams }: { searchParams
         {visits.length === 0 ? (
           <p className="text-sm text-muted">Nothing matches.</p>
         ) : (
-          <ol className="divide-y divide-border">
+          <ol className="divide-y divide-border" aria-label="Every page view">
             {visits.map((v) => {
               const place = [v.city, countryName(v.country)].filter(Boolean).join(", ");
               const extra = [v.timeZone, v.language, v.screen && `${v.screen} window`].filter(Boolean).join(" · ");
               return (
                 <li key={v.id} className="py-3 text-sm" data-visit={v.path}>
                   <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-mono text-xs break-all">{v.path}</span>
-                    {v.bot && <span className="rounded-md bg-warning/15 px-1.5 py-0.5 text-xs font-medium">Bot</span>}
-                    <span className="text-muted">·</span>
-                    {v.username ? (
-                      v.userId !== null ? (
-                        <Link href={`/admin/users/${v.userId}`} className="font-semibold hover:underline">
-                          {v.username}
-                        </Link>
-                      ) : (
-                        <span className="font-semibold">
-                          {v.username} <span className="font-normal text-muted">(deleted)</span>
-                        </span>
-                      )
-                    ) : (
-                      <span className="text-muted">Guest</span>
+                    <span className="font-mono text-xs break-all" data-export-col="Page">
+                      {v.path}
+                    </span>
+                    {v.bot && (
+                      <span className="rounded-md bg-warning/15 px-1.5 py-0.5 text-xs font-medium" data-export-col="Bot">
+                        Bot
+                      </span>
                     )}
+                    <span className="text-muted">·</span>
+                    <span
+                      data-export-col="Who"
+                      data-export-text={v.username ? `${v.username}${v.userId === null ? " (deleted)" : ""}` : "Guest"}
+                    >
+                      {v.username ? (
+                        v.userId !== null ? (
+                          <Link href={`/admin/users/${v.userId}`} className="font-semibold hover:underline">
+                            {v.username}
+                          </Link>
+                        ) : (
+                          <span className="font-semibold">
+                            {v.username} <span className="font-normal text-muted">(deleted)</span>
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-muted">Guest</span>
+                      )}
+                    </span>
                     <Link
                       href={href({ visitor: v.visitorId, user: undefined, before: undefined })}
                       className="font-mono text-xs text-muted hover:underline"
                       title="Show everything from this browser"
+                      data-export-col="Browser ID"
                     >
                       {v.visitorId.slice(0, 8)}
                     </Link>
                   </p>
                   <p className="mt-0.5 text-xs break-words text-muted">
-                    <time dateTime={new Date(v.at).toISOString()} title={formatDateTime(v.at, tz)}>
+                    <time
+                      dateTime={new Date(v.at).toISOString()}
+                      title={formatDateTime(v.at, tz)}
+                      data-export-col="When"
+                      data-export-text={formatDateTime(v.at, tz)}
+                    >
                       {timeAgo(v.at, now, tz)}
                     </time>
-                    {` · ${describeDevice(v.userAgent)}`}
-                    {place && ` · ${place}`}
+                    {" · "}
+                    <span data-export-col="Device">{describeDevice(v.userAgent)}</span>
+                    {place && (
+                      <>
+                        {" · "}
+                        <span data-export-col="Place">{place}</span>
+                      </>
+                    )}
                     {v.ip && (
                       <>
                         {" · "}
-                        <Link href={search(v.ip)} className="hover:underline">
+                        <Link href={search(v.ip)} className="hover:underline" data-export-col="IP address">
                           {v.ip}
                         </Link>
                       </>
                     )}
-                    {v.network && ` · ${v.network}`}
+                    {v.network && (
+                      <>
+                        {" · "}
+                        <span data-export-col="Network">{v.network}</span>
+                      </>
+                    )}
                   </p>
                   {(v.referrer || extra) && (
                     <p className="mt-0.5 text-xs break-words text-muted">
-                      {v.referrer && `From ${v.referrer}`}
+                      {v.referrer && (
+                        <>
+                          From <span data-export-col="Referrer">{v.referrer}</span>
+                        </>
+                      )}
                       {v.referrer && extra && " · "}
-                      {extra}
+                      {extra && <span data-export-col="Browser details">{extra}</span>}
                     </p>
                   )}
                 </li>

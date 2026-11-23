@@ -272,6 +272,23 @@ test("owner monitors and controls accounts from the classic admin panel", async 
     expect(csv).toContain(member.username);
   });
 
+  await test.step("the classic pages have the same Export menu (export.js, §11), audited", async () => {
+    await page.goto("/admin/users");
+    const button = page.getByRole("button", { name: "Export", exact: true });
+    await expect(button).toHaveCount(1);
+    await button.click();
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("menuitem", { name: /JSON/ }).click()]);
+    expect(download.suggestedFilename()).toMatch(/^onlyjewishgirls-accounts-\d{4}-\d{2}-\d{2}\.json$/);
+    const model = JSON.parse(readFileSync((await download.path())!, "utf8"));
+    expect(model.section).toBe("Accounts");
+    const table = model.panels.flatMap((p: { tables: { columns: string[]; rows: string[][] }[] }) => p.tables)[0];
+    expect(table.columns).toEqual(["Username", "Name", "Email", "Status", "Streak", "Last sign-in"]);
+    expect(table.rows.map((r: string[]) => r[0])).toContain(member.username);
+    await expect
+      .poll(() => query<{ detail: string }>("SELECT detail FROM events WHERE type = 'export'").map((r) => JSON.parse(r.detail)))
+      .toContainEqual({ section: "Accounts", format: "json", rows: table.rows.length });
+  });
+
   await test.step("delete the account; the log keeps its name", async () => {
     await page.goto(`/admin/users/${memberId}`);
     await runAction(page, "delete", "Delete forever", member.username);

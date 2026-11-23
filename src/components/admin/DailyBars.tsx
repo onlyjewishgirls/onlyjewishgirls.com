@@ -107,9 +107,11 @@ export function DailyBars({ title, unit, data }: { title: string; unit: string; 
       </div>
 
       <details className="mt-3 text-sm">
-        <summary className="cursor-pointer text-muted hover:text-foreground">Show as table</summary>
+        <summary className="cursor-pointer text-muted hover:text-foreground" data-export-skip="">
+          Show as table
+        </summary>
         <div className="mt-2 max-h-56 overflow-y-auto rounded-lg border border-border">
-          <table className="tabular w-full text-left text-sm">
+          <table className="tabular w-full text-left text-sm" aria-label={title}>
             <thead className="sticky top-0 bg-surface text-xs text-muted">
               <tr>
                 <th className="px-3 py-1.5 font-medium">Day</th>

@@ -229,3 +229,82 @@ describe("console API: settings, audit, alerts", () => {
     expect((await c("GET", "nope")).data).toMatchObject({ code: "not_found" });
   });
 });
+
+describe("console API: export audit (PORTAL-STANDARD §11)", () => {
+  it("bootstrap turns export_audit on", async () => {
+    await signInAs(admin.id);
+    expect(((await c("GET", "bootstrap")).data as Record<string, any>).features.export_audit).toBe(true);
+  });
+
+  it("records one `export` audit entry, with no security alert", async () => {
+    await signInAs(admin.id);
+    const r = await c("POST", "exports", { section: "people", title: "People — member — Profile", format: "pdf", rows: 17 });
+    expect(r.status).toBe(200);
+    expect(r.data).toEqual({ ok: true });
+    await settle();
+    const rows = h.d1.rows<{ type: string; actor_username: string; user_id: number | null; detail: string; ip: string }>(
+      "SELECT type, actor_username, user_id, detail, ip FROM events WHERE type = 'export'",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ actor_username: "admin", user_id: null });
+    expect(JSON.parse(rows[0].detail)).toEqual({ section: "people", title: "People — member — Profile", format: "pdf", rows: 17 });
+    expect(h.d1.rows("SELECT * FROM security_alerts")).toHaveLength(0);
+
+    const audit = (await c("GET", "audit?category=audit")).data as Record<string, any>;
+    expect(audit.items[0]).toMatchObject({
+      action: "export",
+      category: "audit",
+      severity: "info",
+      outcome: "success",
+      detail: "Exported People — member — Profile as PDF (17 rows)",
+      actor: { name: "admin" },
+      target: null,
+      revertible: false,
+    });
+    // Not filed under People.
+    const people = (await c("GET", "audit?category=people")).data as Record<string, any>;
+    expect(people.items.some((i: { action: string }) => i.action === "export")).toBe(false);
+  });
+
+  it("works without a fresh second factor (it only reads) and without a title (export.js pages)", async () => {
+    await signInAs(admin.id, { verified: false });
+    expect((await c("POST", "exports", { section: "Accounts", format: "csv", rows: 1 })).data).toEqual({ ok: true });
+    const audit = (await c("GET", "audit?action=export")).data as Record<string, any>;
+    expect(audit.items[0].detail).toBe("Exported Accounts as CSV (1 row)");
+  });
+
+  it("needs a signed-in admin and the console CSRF header", async () => {
+    const body = { section: "people", format: "csv", rows: 1 };
+    expect((await c("POST", "exports", body)).data.code).toBe("unauthenticated");
+    await signInAs(member.id);
+    expect((await c("POST", "exports", body)).status).toBe(404);
+    h.cookies.clear();
+    await signInAs(admin.id);
+    expect((await c("POST", "exports", body, {})).data.code).toBe("csrf");
+    expect((await c("POST", "exports", body, { "x-requested-with": "console", origin: "https://evil.example" })).data.code).toBe("csrf");
+    expect(h.d1.rows("SELECT * FROM events WHERE type = 'export'")).toHaveLength(0);
+  });
+
+  it("validates and caps every field", async () => {
+    await signInAs(admin.id);
+    const bad = async (body: unknown) => (await c("POST", "exports", body)).data;
+    expect(await bad({ format: "csv", rows: 1 })).toMatchObject({ code: "validation", field: "section" });
+    expect(await bad({ section: "  \u0000 ", format: "csv", rows: 1 })).toMatchObject({ code: "validation", field: "section" });
+    expect(await bad({ section: "x".repeat(121), format: "csv", rows: 1 })).toMatchObject({ code: "validation", field: "section" });
+    expect(await bad({ section: "people", title: "t".repeat(301), format: "csv", rows: 1 })).toMatchObject({ field: "title" });
+    expect(await bad({ section: "people", title: 5, format: "csv", rows: 1 })).toMatchObject({ field: "title" });
+    expect(await bad({ section: "people", format: "xlsx", rows: 1 })).toMatchObject({ code: "validation", field: "format" });
+    expect(await bad({ section: "people", format: "csv", rows: -1 })).toMatchObject({ field: "rows" });
+    expect(await bad({ section: "people", format: "csv", rows: 1.5 })).toMatchObject({ field: "rows" });
+    expect(await bad({ section: "people", format: "csv", rows: "9" })).toMatchObject({ field: "rows" });
+    expect(h.d1.rows("SELECT * FROM events WHERE type = 'export'")).toHaveLength(0);
+    // Control characters are flattened before they reach the log.
+    expect((await bad({ section: "peo\nple", title: "A\u0007B\r\nC", format: "HTML", rows: 0 })).ok).toBe(true);
+    expect(JSON.parse(h.d1.one<{ detail: string }>("SELECT detail FROM events WHERE type = 'export'")!.detail)).toEqual({
+      section: "peo ple",
+      title: "A B C",
+      format: "html",
+      rows: 0,
+    });
+  });
+});
