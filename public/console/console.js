@@ -219,6 +219,20 @@
     if (t === null) return '—';
     return dtf({ year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(t));
   }
+  // A moment in someone else's zone (a person's own streak day), with the
+  // portal zone as the fallback for a missing or unknown name.
+  var zoneCache = {};
+  function fmtFullIn(v, zone) {
+    var t = parseTime(v);
+    if (t === null) return '—';
+    var z = str(zone, tz());
+    if (!zoneCache[z]) {
+      try { zoneCache[z] = new Intl.DateTimeFormat(undefined, { timeZone: z, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+      catch (e) { zoneCache[z] = null; }
+    }
+    if (!zoneCache[z]) return fmtFull(v);
+    return zoneCache[z].format(new Date(t)) + (z !== tz() ? ' (' + z.replace(/_/g, ' ') + ')' : '');
+  }
   function fmtDay(v) {
     var t = parseTime(v);
     if (t === null) return '—';
@@ -1548,6 +1562,7 @@
       ['Password changed', p.password_changed_at ? fmtFull(p.password_changed_at) : null],
       ['Failed sign-ins', p.failed_logins !== undefined && p.failed_logins !== null ? String(p.failed_logins) : null],
       ['Locked until', p.locked_until ? fmtFull(p.locked_until) : null],
+      ['Time zone', str(p.time_zone) ? str(p.time_zone).replace(/_/g, ' ') : null],
       ['Notes', str(p.notes)]
     ]) }));
 
@@ -2028,7 +2043,7 @@
     out.push(h('div', { class: 'cx-streak-hero' },
       statCard({ label: 'Current streak', value: cur ? '🔥 ' + cur : '0', sub: cur ? (s.alive === false ? 'lapsed' : plural(cur, 'day')) : 'no streak', tone: cur && s.alive !== false ? 'warn' : null }),
       statCard({ label: 'Longest', value: num(s.longest, 0), sub: 'days' }),
-      statCard({ label: 'Window', value: s.hours_left !== undefined && s.hours_left !== null && cur ? Math.max(0, Math.round(num(s.hours_left, 0))) + 'h' : '—', sub: s.expires_at ? 'until ' + fmtFull(s.expires_at) : 'left to sign in' }),
+      statCard({ label: 'Window', value: s.hours_left !== undefined && s.hours_left !== null && cur ? Math.max(0, Math.round(num(s.hours_left, 0))) + 'h' : '—', sub: s.expires_at ? 'until ' + fmtFullIn(s.expires_at, s.time_zone || p.time_zone) : 'left to sign in' }),
       feat('streak_restores') ? statCard({ label: 'Courtesy restores', value: num(s.restores_left, 0) + ' of ' + num(s.restores_per_month, 0), sub: 'left this month' }) : null));
     if (s.restore_to) out.push(callout('info', null, 'A courtesy restore would bring their streak back to ' + s.restore_to + ' days. They can do it themselves from their account page.'));
     if (s.leeway_for && s.leeway_for.length) out.push(callout('ok', null, 'The window is stretched for: ' + s.leeway_for.join(', ') + '.'));
