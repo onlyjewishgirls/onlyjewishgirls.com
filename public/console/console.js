@@ -39,7 +39,7 @@
   'use strict';
   if (window && window.ConsoleExport && window.ConsoleExport.loaded) return window.ConsoleExport;
 
-  var VERSION = '1.0.0';
+  var VERSION = '1.0.1';
   var document = window && window.document;
   var hasOwn = Object.prototype.hasOwnProperty;
 
@@ -1377,25 +1377,50 @@
     try { return !!norm(window.getComputedStyle(document.documentElement).getPropertyValue('--cx-primary')); } catch (e) { return false; }
   }
   /** Inline look for pages that do not load console.css (CSSOM, so CSP-safe). */
+  /** True when the page behind the menu is dark (by its own background), or a page asks for it. */
+  function pageIsDark() {
+    var forced = attr(document.documentElement, 'data-export-theme');
+    if (forced === 'dark') return true;
+    if (forced === 'light') return false;
+    function lum(c) {
+      var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,\s/]+([\d.]+))?/.exec(c || '');
+      if (!m || (m[4] !== undefined && Number(m[4]) === 0)) return null;
+      return (0.2126 * m[1] + 0.7152 * m[2] + 0.0722 * m[3]) / 255;
+    }
+    try {
+      var nodes = [document.body, document.documentElement];
+      for (var i = 0; i < nodes.length; i++) {
+        if (!nodes[i]) continue;
+        var l = lum(window.getComputedStyle(nodes[i]).backgroundColor);
+        if (l !== null) return l < 0.4;
+      }
+      return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    } catch (e) { return false; }
+  }
   function fallbackStyle(wrap, button, menu, items) {
+    var dark = pageIsDark();
+    var bg = dark ? '#1f2430' : '#ffffff', fg = dark ? '#e8eaf0' : '#1d2433', line = dark ? 'rgba(255,255,255,.22)' : '#d0d5dd';
+    var hi = dark ? 'rgba(255,255,255,.12)' : '#eef2ff';
     var narrow = false;
     try { narrow = window.matchMedia && window.matchMedia('(max-width: 900px)').matches; } catch (e) { narrow = false; }
     wrap.style.position = 'relative'; wrap.style.display = 'inline-flex';
     var bs = button.style;
     bs.display = 'inline-flex'; bs.alignItems = 'center'; bs.gap = '6px'; bs.font = 'inherit'; bs.fontWeight = '700'; bs.fontSize = '13px';
     bs.padding = '8px 14px'; bs.minHeight = narrow ? '44px' : '36px'; bs.borderRadius = '9px'; bs.border = '1px solid #d0d5dd';
-    bs.background = 'Canvas'; bs.color = 'CanvasText'; bs.cursor = 'pointer';
+    bs.border = '1px solid ' + line; bs.background = bg; bs.color = fg; bs.cursor = 'pointer';
     var ms = menu.style;
     ms.position = 'absolute'; ms.top = 'calc(100% + 6px)'; ms.right = '0'; ms.zIndex = '1000'; ms.minWidth = '220px'; ms.maxWidth = 'calc(100vw - 24px)';
-    ms.background = 'Canvas'; ms.color = 'CanvasText'; ms.border = '1px solid rgba(128,128,128,.45)'; ms.borderRadius = '10px';
+    ms.background = bg; ms.color = fg; ms.border = '1px solid ' + line; ms.borderRadius = '10px';
     ms.boxShadow = '0 16px 40px rgba(0,0,0,.25)'; ms.padding = '6px'; ms.flexDirection = 'column'; ms.gap = '2px';
     each(items, function (it) {
       var s = it.style;
       s.display = 'flex'; s.justifyContent = 'space-between'; s.alignItems = 'center'; s.gap = '16px'; s.width = '100%';
       s.minHeight = '44px'; s.padding = '8px 10px'; s.border = '0'; s.borderRadius = '8px'; s.background = 'none'; s.color = 'inherit';
       s.font = 'inherit'; s.fontWeight = '600'; s.fontSize = '14px'; s.textAlign = 'left'; s.cursor = 'pointer';
-      it.addEventListener('focus', function () { s.background = 'Highlight'; s.color = 'HighlightText'; });
-      it.addEventListener('blur', function () { s.background = 'none'; s.color = 'inherit'; });
+      it.addEventListener('focus', function () { s.background = hi; });
+      it.addEventListener('blur', function () { s.background = 'none'; });
+      it.addEventListener('mouseenter', function () { s.background = hi; });
+      it.addEventListener('mouseleave', function () { if (document.activeElement !== it) s.background = 'none'; });
     });
   }
 
@@ -1421,13 +1446,15 @@
     var ss = status.style;
     ss.position = 'absolute'; ss.width = '1px'; ss.height = '1px'; ss.overflow = 'hidden'; ss.clip = 'rect(0 0 0 0)'; ss.whiteSpace = 'nowrap'; ss.margin = '-1px';
     var wrap = el('div', { class: 'cx-export', 'data-export-skip': true }, [button, list, status]);
-    if (!hasKitCSS()) fallbackStyle(wrap, button, list, items);
+    var fallback = !hasKitCSS();
+    if (fallback) fallbackStyle(wrap, button, list, items);
     var isOpen = false, working = false;
 
     function place() {
       // Right-aligned under the button; left-aligned when that would leave the
       // screen; then nudged so it never overflows either edge.
-      list.style.transform = ''; list.style.left = ''; list.style.right = '';
+      // Without console.css the right:0 anchor lives inline, so put it back.
+      list.style.transform = ''; list.style.left = ''; list.style.right = fallback ? '0' : '';
       var vw = document.documentElement.clientWidth || window.innerWidth;
       var r = list.getBoundingClientRect();
       if (r.left < 8) { list.style.left = '0'; list.style.right = 'auto'; r = list.getBoundingClientRect(); }
@@ -1537,10 +1564,14 @@
     var fields = opts.fields || attr(container, 'data-export-fields') || 'filled';
     var maxRows = Number(opts.maxRows || attr(container, 'data-export-max-rows')) || undefined;
     var auditUrl = opts.auditUrl || attr(container, 'data-export-audit-url');
+    // The site's own zone for dates in the file and the filename; without one
+    // the visitor's browser zone is used (never bare UTC).
+    var tz = opts.timeZone || attr(container, 'data-export-timezone') ||
+      ((document.querySelector('meta[name="export-timezone"]') || {}).content) || browserZone();
     var w = menu({
       collect: function () {
         return loadAll(container, { maxRows: maxRows, fields: fields }).then(function (notes) {
-          return collect(container, { site: site, fields: fields, notes: notes, timeZone: opts.timeZone });
+          return collect(container, { site: site, fields: fields, notes: notes, timeZone: tz });
         });
       },
       onDone: function (info) {
@@ -1561,6 +1592,9 @@
     }
     container._cxExport = w;
     return w;
+  }
+  function browserZone() {
+    try { return (typeof Intl !== 'undefined' && Intl.DateTimeFormat().resolvedOptions().timeZone) || undefined; } catch (e) { return undefined; }
   }
   var started = false;
   function autoStart() {
@@ -1590,7 +1624,7 @@
   'use strict';
   if (window.ConsoleKit && window.ConsoleKit.loaded) return;
 
-  var VERSION = '1.1.0';
+  var VERSION = '1.1.1';
   // The Export menu (export.js, embedded at the top of this file).
   var EXPORT = window.ConsoleExport || null;
   var CFG = {};

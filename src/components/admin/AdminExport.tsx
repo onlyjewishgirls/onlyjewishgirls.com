@@ -11,7 +11,7 @@ declare global {
 }
 
 /** The Console kit's standalone exporter, vendored unchanged next to console.js (bump with the kit). */
-const EXPORT_JS = "/console/export.js?v=1.1.0";
+const EXPORT_JS = "/console/export.js?v=1.1.1";
 
 /** Pages under the admin layout that show no data: the step-up form. */
 const NO_DATA = (pathname: string) => pathname.startsWith("/admin/verify");
