@@ -70,6 +70,10 @@
     "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com"
   },
   "observability": {
-    "enabled": true
+    // Workers Logs: every request, console output and uncaught exception,
+    // searchable under the Worker's Observability tab in the dashboard.
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": true }
   }
 }
