@@ -10,7 +10,7 @@ import type { User } from "./users";
 /**
  * Email codes, the third second factor (PORTAL-STANDARD §3: passkey, authenticator
  * app, email). 6 digits, 10 minutes, single use, stored only as a hash. Sent through
- * the existing Resend/Plunk transport; never offered when email isn't configured.
+ * the existing Plunk transport; never offered when email isn't configured.
  */
 export const EMAIL_CODE_MINUTES = 10;
 export const EMAIL_CODES_PER_HOUR = 5;

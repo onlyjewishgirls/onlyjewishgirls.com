@@ -10,6 +10,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { vi } from "vitest";
 import { MIGRATIONS } from "../../src/server/schema";
+import { mailRetry } from "../../src/server/mail-core";
 
 type Row = Record<string, unknown>;
 
@@ -83,6 +84,8 @@ export const h = {
 };
 
 export function resetHarness() {
+  // No pause before the mail transport's one retry (PORTAL-STANDARD §8), so failure tests stay fast.
+  mailRetry.delayMs = 0;
   h.d1 = new FakeD1();
   // Apply the real migrations up front (db.ts only migrates once per process).
   h.d1.db.exec("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");

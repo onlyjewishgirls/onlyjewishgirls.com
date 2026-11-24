@@ -95,7 +95,7 @@ function dayIn(ms: number, timeZone: string): string {
 
 /**
  * The one email the wall itself may cause: GATE_MODE="off" (break-glass), at most once a day (portal
- * time zone), through the site's normal alert path (security_alerts + Plunk/Resend). Claiming the
+ * time zone), through the site's normal alert path (security_alerts + Plunk). Claiming the
  * day is a single conditional write, so isolates racing each other send it once.
  */
 export async function gateOffAlert(detail: GateEventDetail, env: CloudflareEnv, now = Date.now()): Promise<number | null> {

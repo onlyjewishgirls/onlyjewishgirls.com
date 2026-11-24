@@ -52,11 +52,10 @@
   // EMAIL_FROM and other plain variables are managed in the dashboard. Without this,
   // every `wrangler deploy` deletes them (secrets are always kept).
   "keep_vars": true,
-  // Mail (PORTAL-STANDARD §8): Plunk (PLUNK_API_KEY secret) is the primary; Resend (EMAIL_API_KEY) is
-  // the fallback when both are set. PLUNK_API_KEY alone is a complete set-up (EMAIL_FROM defaults to
-  // no-reply@onlyjewishgirls.com). EMAIL_PRIMARY "resend" would put Resend first.
+  // Mail (PORTAL-STANDARD §8): Plunk (PLUNK_API_KEY secret) is the only provider, with no fallback.
+  // PLUNK_API_KEY alone is a complete set-up (EMAIL_FROM defaults to no-reply@onlyjewishgirls.com).
   // ALERTS_EMAIL_FROM / ALERTS_EMAIL_TO: where security alert emails come from and go to
-  // (PORTAL-STANDARD §6; src/server/alerts.ts). The sender must be on a domain verified in Resend/Plunk.
+  // (PORTAL-STANDARD §6; src/server/alerts.ts). The sender must be on a domain verified in Plunk.
   // CAPTCHA wall (PORTAL-STANDARD §10): TURNSTILE_SITE_KEY goes here once the owner has created the
   // Turnstile widget (Managed; hostnames onlyjewishgirls.com and www.onlyjewishgirls.com if served;
   // the workers.dev hosts are off), e.g. "TURNSTILE_SITE_KEY": "0x4AAAA...". It is left out until then on
@@ -65,7 +64,6 @@
   // every request gets a 503 (fail closed). GATE_MODE "off" (dashboard, plain variable) is the
   // break-glass switch.
   "vars": {
-    "EMAIL_PRIMARY": "plunk",
     "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",
     "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com"
   },

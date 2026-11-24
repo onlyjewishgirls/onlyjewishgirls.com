@@ -1,23 +1,28 @@
 /**
- * The mail transport (Plunk first, Resend as the fallback; PORTAL-STANDARD §8), with the Worker's
- * variables passed in. It imports nothing from Next.js or OpenNext, so the Worker entry
- * (src/worker/captcha.ts, the CAPTCHA wall's daily "wall is off" alert) can send through it before
- * the app runs. The app uses it through mailer.ts, which supplies the request's variables.
+ * The mail transport: Plunk, the only provider (PORTAL-STANDARD §8), with the Worker's variables
+ * passed in. It imports nothing from Next.js or OpenNext, so the Worker entry (src/worker/captcha.ts,
+ * the CAPTCHA wall's daily "wall is off" alert) can send through it before the app runs. The app uses
+ * it through mailer.ts, which supplies the request's variables.
  */
 
-const RESEND_ENDPOINT = "https://api.resend.com/emails";
 /** Plunk's current platform. PLUNK_API_URL overrides it (e.g. a self-hosted Plunk). */
 const PLUNK_ENDPOINT = "https://next-api.useplunk.com/v1/send";
 const TIMEOUT_MS = 8_000;
 /** Sender when EMAIL_FROM isn't set, so PLUNK_API_KEY alone is a complete mail set-up (PORTAL-STANDARD §8). */
 export const DEFAULT_FROM = "OnlyJewishGirls <no-reply@onlyjewishgirls.com>";
+/** What security_alerts.provider and the audit log record for a send. */
+export const PROVIDER = "plunk";
+
+/**
+ * The pause before the one retry after a network error or a Plunk 5xx. Tests set delayMs to 0.
+ * There is no fallback provider: a send that still fails is reported as failed.
+ */
+export const mailRetry = { delayMs: 400 };
 
 /** The variables the transport reads. */
 export interface MailEnv {
-  EMAIL_API_KEY?: string;
   PLUNK_API_KEY?: string;
   PLUNK_API_URL?: string;
-  EMAIL_PRIMARY?: string;
   EMAIL_FROM?: string;
 }
 
@@ -28,16 +33,9 @@ export interface Email {
   html: string;
 }
 
-export interface Provider {
-  name: "Plunk" | "Resend";
-  url: string;
-  key: string;
-  body: Record<string, unknown>;
-}
-
 export interface Delivery {
   ok: boolean;
-  /** The provider that accepted it, or that failed last. */
+  /** "plunk" once a send was attempted; null when mail isn't configured. */
   provider: string | null;
   error: string | null;
 }
@@ -49,37 +47,34 @@ export function plunkFrom(from: string): string | { name: string; email: string 
   return m[1].trim() ? { name: m[1].trim(), email: m[2].trim() } : m[2].trim();
 }
 
-/**
- * Which providers to try, in order. Plunk is the primary whenever PLUNK_API_KEY is set, with Resend
- * (EMAIL_API_KEY) as the fallback on any error; with only one key, that one is used alone. Setting
- * EMAIL_PRIMARY to "resend" puts Resend first instead.
- */
-export function providersFor(env: MailEnv, email: Email, from: string): Provider[] {
-  const { EMAIL_API_KEY: resendKey, PLUNK_API_KEY: plunkKey, EMAIL_PRIMARY: primary, PLUNK_API_URL: plunkUrl } = env;
-  const list: Provider[] = [];
-  if (plunkKey) {
-    // Plunk takes the HTML only and makes the text part from it.
-    list.push({
-      name: "Plunk",
-      url: plunkUrl?.trim() || PLUNK_ENDPOINT,
-      key: plunkKey,
-      body: { from: plunkFrom(from), to: email.to, subject: email.subject, body: email.html },
-    });
-  }
-  if (resendKey) {
-    list.push({ name: "Resend", url: RESEND_ENDPOINT, key: resendKey, body: { from, to: [email.to], subject: email.subject, text: email.text, html: email.html } });
-  }
-  if (primary?.toLowerCase() === "resend") list.reverse();
-  return list;
-}
-
-/** Mail works when either key is set; PLUNK_API_KEY alone is enough (EMAIL_FROM has a default). */
+/** Mail is configured exactly when PLUNK_API_KEY is set (EMAIL_FROM has a default). */
 export function mailConfigured(env: MailEnv): boolean {
-  return Boolean(env.EMAIL_API_KEY || env.PLUNK_API_KEY);
+  return Boolean(env.PLUNK_API_KEY?.trim());
+}
+
+type Attempt = { ok: true } | { ok: false; retry: boolean; error: string };
+
+async function attempt(url: string, key: string, body: string, to: string): Promise<Attempt> {
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (res.ok) return { ok: true };
+    const text = (await res.text()).slice(0, 300);
+    console.error(`Email to ${to} via Plunk failed: ${res.status} ${text}`);
+    return { ok: false, retry: res.status >= 500, error: `Plunk answered ${res.status}: ${text}` };
+  } catch (error) {
+    console.error(`Email to ${to} via Plunk failed:`, (error as Error).message);
+    return { ok: false, retry: true, error: `Plunk: ${(error as Error).message}` };
+  }
 }
 
 /**
- * Sends through Plunk (PLUNK_API_KEY), with Resend (EMAIL_API_KEY) as the fallback when both are set.
+ * Sends through Plunk (PLUNK_API_KEY). A network error or a 5xx is retried once after a short pause;
+ * a 4xx is not. It never throws: a failure comes back as { ok: false } for the caller to record.
  * The sender is the `from` passed in (security alerts), else EMAIL_FROM, else DEFAULT_FROM. Without
  * a key, local development prints the email to the terminal instead.
  */
@@ -97,25 +92,16 @@ export async function deliverEmailWith(
     }
     return { ok: false, provider: null, error: "Email is not configured: set the PLUNK_API_KEY secret on the Worker." };
   }
-  let last: Delivery = { ok: false, provider: null, error: "No email provider is configured." };
-  for (const provider of providersFor(env, email, from)) {
-    try {
-      const res = await fetch(provider.url, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${provider.key}`, "Content-Type": "application/json" },
-        body: JSON.stringify(provider.body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      if (res.ok) return { ok: true, provider: provider.name, error: null };
-      const text = (await res.text()).slice(0, 300);
-      console.error(`Email to ${email.to} via ${provider.name} failed: ${res.status} ${text}`);
-      last = { ok: false, provider: provider.name, error: `${provider.name} answered ${res.status}: ${text}` };
-    } catch (error) {
-      console.error(`Email to ${email.to} via ${provider.name} failed:`, (error as Error).message);
-      last = { ok: false, provider: provider.name, error: `${provider.name}: ${(error as Error).message}` };
-    }
+  const url = env.PLUNK_API_URL?.trim() || PLUNK_ENDPOINT;
+  const key = env.PLUNK_API_KEY!.trim();
+  // Plunk takes the HTML only and makes the text part from it.
+  const body = JSON.stringify({ from: plunkFrom(from), to: email.to, subject: email.subject, body: email.html });
+  let result = await attempt(url, key, body, email.to);
+  if (!result.ok && result.retry) {
+    if (mailRetry.delayMs > 0) await new Promise((resolve) => setTimeout(resolve, mailRetry.delayMs));
+    result = await attempt(url, key, body, email.to);
   }
-  return last;
+  return result.ok ? { ok: true, provider: PROVIDER, error: null } : { ok: false, provider: PROVIDER, error: result.error };
 }
 
 export const escapeHtml = (value: string) =>

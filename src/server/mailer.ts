@@ -1,22 +1,17 @@
 import "server-only";
 import { cfEnv } from "./env";
-import { deliverEmailWith, escapeHtml, mailConfigured, providersFor, type Delivery, type Email, type Provider } from "./mail-core";
+import { deliverEmailWith, escapeHtml, mailConfigured, type Delivery, type Email } from "./mail-core";
 
 // The transport itself is in mail-core.ts (no Next.js imports, so the Worker entry can use it too).
 export { DEFAULT_FROM, escapeHtml, plunkFrom, type Delivery, type Email } from "./mail-core";
 
-/** Which providers to try, in order (see providersFor). */
-export function providers(email: Email, from: string): Provider[] {
-  return providersFor(cfEnv(), email, from);
-}
-
-/** Mail works when either key is set; PLUNK_API_KEY alone is enough (EMAIL_FROM has a default). */
+/** Mail is configured exactly when PLUNK_API_KEY is set (EMAIL_FROM has a default). */
 export function emailConfigured(): boolean {
   return mailConfigured(cfEnv());
 }
 
 /**
- * Sends through Plunk (PLUNK_API_KEY), with Resend (EMAIL_API_KEY) as the fallback when both are set.
+ * Sends through Plunk (PLUNK_API_KEY), retrying once on a network error or a 5xx; no fallback provider.
  * The sender is the `from` passed in (security alerts), else EMAIL_FROM, else DEFAULT_FROM. Without
  * a key, local development prints the email to the terminal instead.
  */

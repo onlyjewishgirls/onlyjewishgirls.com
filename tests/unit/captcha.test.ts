@@ -23,7 +23,7 @@ const KEYS = { TURNSTILE_SITE_KEY: "0x4AAAAAAAunittestsitekey", TURNSTILE_SECRET
 
 /** Every call the stand-in app received: if the wall works, unpassed traffic never shows up here. */
 let appCalls: string[] = [];
-/** Emails handed to Plunk/Resend (the alert sender, mocked). */
+/** Emails handed to Plunk (the alert sender, mocked). */
 let mail: { url: string; body: Record<string, any> }[] = [];
 let siteverify: { form: URLSearchParams; answer: Record<string, unknown> }[] = [];
 let siteverifyAnswer: Record<string, unknown>;
@@ -108,7 +108,7 @@ const count = (table: string) => h.d1.one<{ n: number }>(`SELECT COUNT(*) AS n F
 
 beforeEach(() => {
   resetHarness();
-  Object.assign(h.env, KEYS, { EMAIL_API_KEY: "re_test" });
+  Object.assign(h.env, KEYS, { PLUNK_API_KEY: "sk_test" });
   appCalls = [];
   mail = [];
   siteverify = [];
@@ -359,7 +359,7 @@ describe("CAPTCHA wall: configuration", () => {
     expect(alerts).toEqual([expect.objectContaining({ status: "sent", subject: "[SECURITY] OnlyJewishGirls — The CAPTCHA wall is OFF" })]);
     const offMail = mail.filter((m) => String(m.body.subject).includes("CAPTCHA wall is OFF"));
     expect(offMail).toHaveLength(1);
-    expect(offMail[0].body).toMatchObject({ from: "OnlyJewishGirls Security <securityalerts@onlyjewishgirls.com>", to: ["soc@onlyjewishgirls.com"] });
+    expect(offMail[0].body).toMatchObject({ from: { name: "OnlyJewishGirls Security", email: "securityalerts@onlyjewishgirls.com" }, to: "soc@onlyjewishgirls.com" });
     // Another isolate later the same day: no second email.
     captcha = createCaptcha();
     await send("/");

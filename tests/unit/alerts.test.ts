@@ -15,7 +15,7 @@ let sent: Sent[] = [];
 
 beforeEach(() => {
   resetHarness();
-  h.env.EMAIL_API_KEY = "re_test";
+  h.env.PLUNK_API_KEY = "sk_test";
   h.env.EMAIL_FROM = "OnlyJewishGirls <no-reply@onlyjewishgirls.com>";
   sent = [];
   vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
@@ -31,14 +31,14 @@ describe("security alert emails (§6)", () => {
   it("goes from securityalerts@ to soc@ the apex by default, through the existing transport", async () => {
     await recordAndSend(base, "www.onlyjewishgirls.com");
     expect(sent).toHaveLength(1);
-    expect(sent[0].url).toBe("https://api.resend.com/emails");
+    expect(sent[0].url).toBe("https://next-api.useplunk.com/v1/send");
     expect(sent[0].body).toMatchObject({
-      from: "OnlyJewishGirls Security <securityalerts@onlyjewishgirls.com>",
-      to: ["soc@onlyjewishgirls.com"],
+      from: { name: "OnlyJewishGirls Security", email: "securityalerts@onlyjewishgirls.com" },
+      to: "soc@onlyjewishgirls.com",
       subject: "[SECURITY] OnlyJewishGirls — Wrong password",
     });
     const row = h.d1.one<{ status: string; to_addr: string; provider: string }>("SELECT * FROM security_alerts")!;
-    expect(row).toMatchObject({ status: "sent", to_addr: "soc@onlyjewishgirls.com", provider: "Resend" });
+    expect(row).toMatchObject({ status: "sent", to_addr: "soc@onlyjewishgirls.com", provider: "plunk" });
   });
 
   it("uses ALERTS_EMAIL_FROM / ALERTS_EMAIL_TO when set", async () => {
@@ -46,7 +46,7 @@ describe("security alert emails (§6)", () => {
     h.env.ALERTS_EMAIL_TO = "owner@example.com";
     h.env.ALERT_EMAIL_TO = "legacy@example.com";
     await recordAndSend(base, "onlyjewishgirls.com");
-    expect(sent[0].body).toMatchObject({ from: "OnlyJewishGirls Security <alerts@onlyjewishgirls.com>", to: ["owner@example.com"] });
+    expect(sent[0].body).toMatchObject({ from: { name: "OnlyJewishGirls Security", email: "alerts@onlyjewishgirls.com" }, to: "owner@example.com" });
   });
 
   it("sends one per (event, key) per 10 minutes and counts the rest as +N more", async () => {
@@ -61,7 +61,7 @@ describe("security alert emails (§6)", () => {
     expect(statuses).toEqual(["sent", "throttled", "throttled", "sent"]);
     await recordAndSend({ ...base, now: t0 + ALERT_DEDUPE_MS + 1 }, "onlyjewishgirls.com");
     expect(sent).toHaveLength(3);
-    expect(String(sent[2].body.text)).toContain("+2 more alerts like this in the last 10 minutes (throttled)");
+    expect(String(sent[2].body.body)).toContain("+2 more alerts like this in the last 10 minutes (throttled)");
     expect(h.d1.one<{ suppressed: number }>("SELECT suppressed FROM security_alerts ORDER BY id DESC")!.suppressed).toBe(2);
   });
 
@@ -75,7 +75,7 @@ describe("security alert emails (§6)", () => {
     // The next one after the window carries the count.
     await recordAndSend({ ...base, now: t0 + ALERT_DEDUPE_MS + 10 }, "onlyjewishgirls.com");
     expect(sent).toHaveLength(2);
-    expect(String(sent[1].body.text)).toContain("+7 more alerts like this");
+    expect(String(sent[1].body.body)).toContain("+7 more alerts like this");
   });
 
   it("parallel failed sign-ins from one address against one account email once", async () => {
@@ -89,11 +89,13 @@ describe("security alert emails (§6)", () => {
   });
 
   it("records a failed delivery", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
     await recordAndSend(base, "onlyjewishgirls.com");
-    expect(h.d1.one<{ status: string; error: string }>("SELECT * FROM security_alerts")).toMatchObject({
+    expect(h.d1.one<{ status: string; error: string; provider: string }>("SELECT * FROM security_alerts")).toMatchObject({
       status: "failed",
-      error: "Resend answered 500: nope",
+      provider: "plunk",
+      error: "Plunk answered 500: nope",
     });
   });
 
@@ -136,8 +138,10 @@ describe("owner lockout safety (§7)", () => {
     expect(deny).toMatchObject({ owner_session: 1, sessions_killed: 1 });
     const alert = sent.find((s) => String(s.body.subject).includes("OWNER LOCKOUT"))!;
     expect(alert.body.subject).toBe("[SECURITY] OnlyJewishGirls — OWNER LOCKOUT: Auto-blacklisted the owner's IP");
-    expect(String(alert.body.text)).toContain("WARNING: This IP address belongs to the OWNER's live session.");
-    expect(String(alert.body.text)).toContain("npx wrangler d1 execute onlyjewishgirls --remote");
+    // Plunk gets the HTML (it makes the text part from it): the red banner plus the WARNING row.
+    expect(String(alert.body.body)).toContain("OWNER LOCKOUT — this IP belonged to the owner's live session.");
+    expect(String(alert.body.body)).toContain("This IP address belongs to the OWNER&#39;s live session.");
+    expect(String(alert.body.body)).toContain("npx wrangler d1 execute onlyjewishgirls --remote");
     expect(h.d1.one<{ owner_lockout: number }>("SELECT owner_lockout FROM security_alerts WHERE event = 'auto_blacklist'")!.owner_lockout).toBe(1);
   });
 });

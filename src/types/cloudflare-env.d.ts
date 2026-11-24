@@ -1,9 +1,7 @@
 // Optional settings that aren't in wrangler.jsonc, so `wrangler types` doesn't know about them.
 interface CloudflareEnv {
   WEBAUTHN_RP_ID?: string;
-  /** Resend API key (secret): the fallback when Plunk fails. */
-  EMAIL_API_KEY?: string;
-  /** Plunk secret key (sk_…): the primary mail provider. Alone, it's a complete mail set-up. */
+  /** Plunk secret key (sk_…): the only mail provider. Mail is configured exactly when this is set. */
   PLUNK_API_KEY?: string;
   /** Optional override for Plunk's send endpoint (default https://next-api.useplunk.com/v1/send). */
   PLUNK_API_URL?: string;
