@@ -1624,7 +1624,7 @@
   'use strict';
   if (window.ConsoleKit && window.ConsoleKit.loaded) return;
 
-  var VERSION = '1.1.1';
+  var VERSION = '1.1.2';
   // The Export menu (export.js, embedded at the top of this file).
   var EXPORT = window.ConsoleExport || null;
   var CFG = {};
@@ -1892,7 +1892,7 @@
     deleted: ['Deleted', 'muted'], pending: ['Pending', 'warn'], approved: ['Approved', 'ok'],
     blocked: ['Blocked', 'danger'], revoked: ['Revoked', 'muted'], expired: ['Expired', 'muted'],
     accepted: ['Accepted', 'ok'], sent: ['Sent', 'ok'], throttled: ['Throttled', 'warn'],
-    failed: ['Failed', 'danger'], queued: ['Queued', 'info'], ended: ['Ended', 'muted'],
+    failed: ['Failed', 'danger'], queued: ['Queued', 'info'], suppressed: ['Recorded, not emailed', 'muted'], ended: ['Ended', 'muted'],
     denied: ['Denied', 'warn'], success: ['Success', 'ok'], failure: ['Failure', 'danger'],
     info: ['Info', 'muted'], notice: ['Notice', 'info'], warning: ['Warning', 'warn'], critical: ['Critical', 'danger'],
     allow: ['Allow', 'ok'], challenge: ['Challenge', 'warn'], block: ['Block', 'danger']
@@ -2634,7 +2634,7 @@
       intro: 'Every change anyone made, and every sign-in, refusal and failure. Open an entry to see exactly what changed; entries that can be undone carry a Revert button.' },
     { key: 'alerts', group: 'Records', label: 'Security alerts', feature: 'alerts', perm: 'alerts.view',
       title: 'Security alerts',
-      intro: 'Every security alert email this site has tried to send: what happened, who it went to, and whether it was delivered, failed, or folded into a later email by the throttle.' }
+      intro: 'Every security alert this site has recorded: what happened, who it went to, and whether it was delivered, failed, folded into a later email by the throttle, or recorded without an email (anonymous internet traffic).' }
   ];
   var SEC_BY_KEY = {};
   each(SECTIONS, function (s) { SEC_BY_KEY[s.key] = s; });
@@ -4684,7 +4684,7 @@
   SEC_BY_KEY.alerts.render = function (ctx, r) {
     var m = msgNode();
     var f = { status: str(r.params.status), q: str(r.params.q) };
-    var statusSel = h('select', { 'aria-label': 'Delivery status' }, map([['', 'Any status'], ['sent', 'Sent'], ['throttled', 'Throttled'], ['failed', 'Failed'], ['queued', 'Queued']], function (o) { return h('option', { value: o[0], text: o[1] }); }));
+    var statusSel = h('select', { 'aria-label': 'Delivery status' }, map([['', 'Any status'], ['sent', 'Sent'], ['throttled', 'Throttled'], ['failed', 'Failed'], ['queued', 'Queued'], ['suppressed', 'Recorded, not emailed']], function (o) { return h('option', { value: o[0], text: o[1] }); }));
     statusSel.value = f.status;
     var search = h('input', { type: 'search', class: 'cx-search', placeholder: 'Event, subject, address…', 'aria-label': 'Search alerts', value: f.q, maxlength: '120' });
     var routeHost = h('div'), listHost = h('div');
@@ -4701,7 +4701,7 @@
         return { cells: [when(a.ts),
           h('span', null, mono(a.event), a.owner_lockout ? h('span', { style: { display: 'block', marginTop: '3px' } }, badge('owner locked out', 'danger')) : null),
           cellSub(str(a.subject), filter([a.ip ? str(a.ip) : '', a.person ? personName(a.person) : ''], Boolean).join(' · ')),
-          a.to ? mono(a.to) : null,
+          a.status === 'suppressed' ? h('span', { class: 'cx-cell-sub', text: 'not emailed' }) : (a.to ? mono(a.to) : null),
           h('span', null, statusBadge(a.status), num(a.suppressed, 0) ? h('span', { class: 'cx-cell-sub', text: '+' + num(a.suppressed, 0) + ' more folded in' }) : null,
             a.error ? h('span', { class: 'cx-cell-sub', style: { color: 'var(--cx-danger)' }, text: a.error }) : null,
             a.provider ? h('span', { class: 'cx-cell-sub', text: 'via ' + a.provider }) : null),

@@ -7,7 +7,7 @@ import { checkCountry, recordCountryRefusal } from "@/server/country-rule";
 import { getAuth } from "@/server/session";
 
 /** Bumped with the vendored kit (public/console/) so browsers don't keep an old copy. */
-const KIT_VERSION = "1.1.0";
+const KIT_VERSION = "1.1.2";
 
 const html = `<!doctype html>
 <html lang="en">
