@@ -19,10 +19,15 @@ export function fail(status: number, code: string, error: string, field?: string
   return NextResponse.json({ ok: false, code, field: field ?? null, error, ...extra }, { status });
 }
 
-/** States the limit exactly, and counts as a rate-limit strike against the address (§7). */
-export async function tooManyRequests(retryAfterSeconds: number, ip?: string | null, what = "attempts") {
+/**
+ * States the limit exactly. Only the request that first goes over a limit counts as a rate-limit trip
+ * against the address (§7), so one burst (say, a fast typist on the live password checklist) is one
+ * trip, not one per refused request. Pass `firstRefusal` from rateLimit(); checks that don't count an
+ * attempt (isRateLimited) pass false and never count.
+ */
+export async function tooManyRequests(retryAfterSeconds: number, ip?: string | null, what = "attempts", firstRefusal = false) {
   const address = ip ?? (await currentIp());
-  await recordStrike("rate_limit", { ip: address, subject: what });
+  if (firstRefusal) await recordStrike("rate_limit", { ip: address, subject: what });
   return NextResponse.json(
     {
       ok: false,
@@ -83,8 +88,16 @@ export function str(value: unknown): string {
 
 type Handler = (req: NextRequest) => Promise<Response>;
 
-/** Body fields checked for injection signatures. Passwords, codes and free text are never inspected. */
-const INSPECTED_FIELDS = ["identifier", "username", "email", "firstName", "middleName", "lastName", "phone", "timeZone", "q", "path"];
+/**
+ * Body fields checked for injection signatures: only the sign-in and forgot-password identifier, a
+ * username or email typed before signing in, where no real username or address can hold a signature.
+ * Everything a person saves or types once signed in (names, notes, messages, subjects, search boxes,
+ * the visit tracker's page path) is never inspected: "O'Brien", "<b>hi</b>", "SELECT * FROM" and
+ * "../notes" are ordinary text there (PORTAL-STANDARD §7, "normal use must never trip the auto-blocker").
+ * Passwords and codes are never inspected either. The URL (path and query) is still checked on every
+ * API call: none of this site's pages put anything in an API URL's query string.
+ */
+const INSPECTED_FIELDS = ["identifier"];
 
 /**
  * Injection / traversal signatures in the query string or the identifying body fields (§7).

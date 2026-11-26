@@ -21,7 +21,7 @@ export const POST = api(async (req) => {
   if (!mfa.complete) return jsonError(403, "Finish setting up two-step sign-in first.", { next: "/setup-mfa" });
 
   const limit = await rateLimit(`change-password:${user.id}`, 10, 15 * 60_000);
-  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, null, "password changes", limit.firstRefusal);
 
   const body = await readJson(req);
   const password = str(body.password);

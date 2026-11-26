@@ -81,6 +81,16 @@ export async function logEvent(
       options.undo ? JSON.stringify(options.undo) : null,
     );
     id = lastRowId;
+    // A successful sign-in shows the wrong passwords and codes for that account from this address were
+    // the owner's own typos: they stop counting towards the auto-blocker (§7). Other accounts' failures
+    // from the address, decoys, injections and refused admin requests keep counting.
+    if (type === "signin.complete" && options.user && info.ip) {
+      await run(
+        "DELETE FROM ip_strikes WHERE ip = ? AND subject = ? AND kind IN ('failed_password', 'failed_mfa')",
+        info.ip,
+        `u${options.user.id}`,
+      );
+    }
     if (now - lastPrunedAt > 60 * 60_000) {
       lastPrunedAt = now;
       await run("DELETE FROM events WHERE at < ?", now - RETENTION_MS);

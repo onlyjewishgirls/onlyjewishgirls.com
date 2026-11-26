@@ -139,14 +139,48 @@ describe("PORTAL-STANDARD §7: auto-blacklist from sign-in failures", () => {
     expect(after.data.code).toBe("ip_blocked");
   });
 
-  it("failed attempts against 3 different accounts in the window blocks", async () => {
-    await makeUser({ username: "a1" });
-    await makeUser({ username: "a2" });
-    await signIn("a1", "x");
-    await signIn("a2", "x");
-    const r = await signIn("someone-else", "x");
-    expect(r.data.code).toBe("no_account");
-    expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("multi_account");
+  // PORTAL-STANDARD §7 "Failed sign-ins from one address across several accounts (shared office address)".
+  it("4 people at one address each mistype once before any of them signs in: not blocked", async () => {
+    for (const name of ["p1", "p2", "p3", "p4"]) await makeUser({ username: name });
+    for (const name of ["p1", "p2", "p3", "p4"]) expect((await signIn(name, "typo")).data.code).toBe("wrong_password");
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+  });
+
+  it("a successful sign-in settles that account's earlier failures from the address (the audit log keeps them)", async () => {
+    const { logEvent } = await import("@/server/events");
+    const people = [];
+    for (const name of ["q1", "q2", "q3", "q4", "q5", "q6"]) people.push(await makeUser({ username: name }));
+    for (const p of people.slice(0, 4)) await signIn(p.username, "typo");
+    // q1..q4 then finish signing in from this address: their failures stop counting.
+    for (const p of people.slice(0, 4)) await logEvent("signin.complete", { user: { id: p.id, username: p.username } });
+    expect(h.d1.rows("SELECT * FROM ip_strikes WHERE kind = 'failed_password'")).toEqual([]);
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'signin.failed'")!.n).toBe(4);
+    // Two more colleagues mistype: 6 people in all, but only 2 unsettled accounts.
+    expect((await signIn("q5", "typo")).data.code).toBe("wrong_password");
+    expect((await signIn("q6", "typo")).data.code).toBe("wrong_password");
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+  });
+
+  it("failed attempts against 5 distinct real accounts in the window blocks", async () => {
+    for (const name of ["a1", "a2", "a3", "a4", "a5"]) await makeUser({ username: name });
+    for (const name of ["a1", "a2", "a3", "a4"]) expect((await signIn(name, "x")).data.code).toBe("wrong_password");
+    const r = await signIn("a5", "x");
+    expect(r.data.code).toBe("ip_blocked");
+    expect(h.d1.one<{ trigger_kind: string; reason: string }>("SELECT trigger_kind, reason FROM ip_rules WHERE kind = 'deny'")).toMatchObject({
+      trigger_kind: "multi_account",
+      reason: "Failed sign-ins against 5 different accounts in 15 min.",
+    });
+  });
+
+  it("3 made-up names block (username guessing); 2 don't", async () => {
+    await signIn("made-up-1", "x");
+    await signIn("made-up-2", "x");
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+    await signIn("made-up-3", "x");
+    expect(h.d1.one<{ trigger_kind: string; reason: string }>("SELECT trigger_kind, reason FROM ip_rules WHERE kind = 'deny'")).toMatchObject({
+      trigger_kind: "multi_account",
+      reason: "Failed sign-ins for 3 usernames that don't exist in 15 min.",
+    });
   });
 
   it("an injection signature in the identifier blocks at once", async () => {

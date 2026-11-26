@@ -282,7 +282,7 @@ describe("CAPTCHA wall: unpassed traffic is silent (counters only)", () => {
     ]);
   });
 
-  it("the same requests with a pass reach detection: the decoy hit is audited, blocked and alerted", async () => {
+  it("the same requests with a pass reach detection: the decoy hit is audited, blocked and recorded (no email: anonymous)", async () => {
     const cookie = await pass();
     const res = await send("/.env", { cookie });
     expect(res.status).toBe(404);
@@ -292,7 +292,8 @@ describe("CAPTCHA wall: unpassed traffic is silent (counters only)", () => {
     expect(h.d1.rows<{ event: string }>("SELECT event FROM security_alerts").map((r) => r.event)).toEqual(
       expect.arrayContaining(["decoy_hit", "auto_blacklist"]),
     );
-    expect(mail.length).toBeGreaterThan(0);
+    expect(h.d1.rows<{ status: string }>("SELECT status FROM security_alerts").every((r) => r.status === "suppressed")).toBe(true);
+    expect(mail.filter((m) => String(m.body.to) === "soc@onlyjewishgirls.com")).toEqual([]);
   });
 
   it("an injection payload with a pass is refused and blocks the address", async () => {

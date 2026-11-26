@@ -218,7 +218,7 @@ export const MIGRATIONS: string[][] = [
       subject       TEXT NOT NULL,
       to_addr       TEXT NOT NULL,
       from_addr     TEXT NOT NULL,
-      status        TEXT NOT NULL,                 -- queued, sent, throttled, failed
+      status        TEXT NOT NULL,                 -- queued, sent, throttled, failed, suppressed (recorded, not emailed)
       provider      TEXT,
       error         TEXT,
       suppressed    INTEGER NOT NULL DEFAULT 0,    -- earlier throttled alerts folded into this one

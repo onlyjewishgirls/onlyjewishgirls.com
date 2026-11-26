@@ -21,7 +21,7 @@ import { createUser, emailTaken, usernameTaken } from "@/server/users";
 
 export const POST = api(async (req) => {
   const limit = await rateLimit(`register:${clientIp(req)}`, 10, 60 * 60_000);
-  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, null, "sign-ups", limit.firstRefusal);
 
   const body = await readJson(req);
   const input: RegistrationInput = {

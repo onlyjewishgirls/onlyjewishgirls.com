@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-const base = { event: "failed_signin" as const, title: "Wrong password", key: "u1:203.0.113.10", what: "Wrong password — account miriam." };
+const base = { event: "failed_signin" as const, title: "Wrong password", key: "u1:203.0.113.10", what: "Wrong password — account miriam.", user: { id: 1, username: "miriam" } };
 
 describe("security alert emails (§6)", () => {
   it("goes from securityalerts@ to soc@ the apex by default, through the existing transport", async () => {
@@ -132,13 +132,15 @@ describe("security alert emails (§6)", () => {
     expect(rows.map((r) => r.status)).toEqual(["sent", "throttled", "throttled"]);
   });
 
-  it("a decoy hit blocks the address and alerts twice (decoy + auto-blacklist)", async () => {
+  it("an anonymous decoy hit blocks the address and records decoy, hostile and auto-blacklist alerts, without an email", async () => {
     const r = await call(decoy, "/api/decoy?p=.env");
     expect(r.status).toBe(404);
     await settle();
     expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("decoy");
-    const events = h.d1.rows<{ event: string }>("SELECT event FROM security_alerts ORDER BY id").map((r) => r.event);
-    expect(events).toEqual(expect.arrayContaining(["decoy_hit", "auto_blacklist", "hostile_visitor"]));
+    const rows = h.d1.rows<{ event: string; status: string }>("SELECT event, status FROM security_alerts ORDER BY id");
+    expect(rows.map((r) => r.event)).toEqual(expect.arrayContaining(["decoy_hit", "auto_blacklist", "hostile_visitor"]));
+    expect(rows.every((r) => r.status === "suppressed")).toBe(true);
+    expect(sent).toEqual([]);
   });
 });
 

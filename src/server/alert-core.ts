@@ -16,16 +16,6 @@ import { approximateLocation, formatWhen, mailIdentity, renderNotice, subjectLin
 /** One email per (event, key) per this long; later ones are recorded as throttled and counted in the next. */
 export const ALERT_DEDUPE_MS = 10 * 60_000;
 
-/**
- * Alerts about anonymous internet traffic (scanners, decoy hits, auto-blacklist, hostile visitors,
- * admin-endpoint denials). They are digested: at most one email per event type per DIGEST_MS, and the
- * addresses recorded in between are listed in the next one. Every event is still a security_alerts row.
- */
-export const DIGEST_EVENTS: ReadonlySet<AlertEvent> = new Set<AlertEvent>(["auto_blacklist", "hostile_visitor", "decoy_hit", "admin_access_denied"]);
-export const DIGEST_MS = 60 * 60_000;
-/** Addresses listed by name in a digest; the rest are "and N more". */
-export const DIGEST_LIST_MAX = 20;
-
 export type AlertEvent =
   | "failed_signin"
   | "failed_mfa"
@@ -66,8 +56,15 @@ export interface AlertInput {
   region?: string | null;
   userAgent?: string | null;
   auditId?: number | null;
-  /** §7: the blocked IP belongs to the owner's live session. Shown prominently, and never held back. */
+  /** §7: the blocked IP belongs to the owner's live session. Shown prominently, and always emailed. */
   ownerLockout?: boolean;
+  /** Auto-blacklist only: the address was on the allowlist (taken off it by the block). Always emailed. */
+  wasAllowlisted?: boolean;
+  /**
+   * Auto-blacklist only: the latest successful sign-in from the address in the last 24 hours, if any.
+   * A real person flagged right after signing in is emailed; an address that never signed in is not.
+   */
+  signedIn?: { username: string; at: number } | null;
   now?: number;
 }
 
@@ -92,6 +89,33 @@ export interface AlertContext {
   timeZone: string;
   /** Local development: http links, and an unconfigured mailer prints instead of failing. */
   local: boolean;
+}
+
+/**
+ * Whether an alert is emailed (PORTAL-STANDARD §6 "Volume", owner 2026-11-26: "if an address gets
+ * autoblocked dont send an email only send an email for super important security alerts or if an
+ * address that got blocked was from someone who signed in successfully but got flagged right after").
+ *
+ * Anonymous internet traffic is recorded (security_alerts status `suppressed`, the audit log, the deny
+ * list) and shown in the console, but not emailed: scanner/decoy hits, hostile visitors, country-rule
+ * refusals, failed sign-ins for accounts that don't exist, refused admin requests with no account, and
+ * auto-blocks of an address with no successful sign-in in the last 24 hours that wasn't allowlisted or
+ * the owner's. Everything else is emailed, with the usual 10-minute dedupe. Pure; exported for tests.
+ */
+export function shouldEmail(input: AlertInput): boolean {
+  switch (input.event) {
+    case "decoy_hit":
+    case "hostile_visitor":
+    case "country_blocked":
+      return false;
+    case "failed_signin":
+    case "admin_access_denied":
+      return Boolean(input.user);
+    case "auto_blacklist":
+      return Boolean(input.ownerLockout || input.wasAllowlisted || input.signedIn);
+    default:
+      return true;
+  }
 }
 
 /** The plain-words subject for each event, and what the administrator can do about it. */
@@ -195,38 +219,35 @@ const COPY: Record<AlertEvent, { subject: string; actions: string[] }> = {
   },
 };
 
-function alertSubject(input: AlertInput, id: MailIdentity, suffix = ""): string {
-  return subjectLine(id, input.ownerLockout ? "The owner's IP address was blocked automatically" : COPY[input.event].subject, suffix);
+/** The heading and subject wording: the plain-words event, or which kind of auto-block it was. */
+function headline(input: AlertInput): string {
+  if (input.event === "auto_blacklist") {
+    if (input.ownerLockout) return "The owner's IP address was blocked automatically";
+    if (input.wasAllowlisted) return "An allowlisted IP address was blocked automatically";
+    if (input.signedIn) return `IP address blocked automatically after ${input.signedIn.username} signed in from it`;
+  }
+  return COPY[input.event].subject;
 }
 
-export interface Digest {
-  /** "203.0.113.5 (3 events)", busiest first, at most DIGEST_LIST_MAX, then "and N more addresses". */
-  items: string[];
-  /** Events in this email, this one included. */
-  events: number;
-  addresses: number;
-  /** When the previous email about this event type went out, if any. */
-  since: number | null;
+function alertSubject(input: AlertInput, id: MailIdentity, suffix = ""): string {
+  return subjectLine(id, headline(input), suffix);
 }
 
 /** Pure (exported for tests): the subject, the HTML Plunk gets and the matching text. */
 export function composeAlert(
   input: AlertInput,
-  ctx: { identity: MailIdentity; timeZone: string; auditUrl: string | null; suppressed: number; now: number; host?: string; digest?: Digest | null },
+  ctx: { identity: MailIdentity; timeZone: string; auditUrl: string | null; suppressed: number; now: number; host?: string; consoleUrl?: string },
 ): ComposedAlert {
   const id = ctx.identity;
-  const digest = ctx.digest && ctx.digest.events > 1 ? ctx.digest : null;
-  const more = digest ? digest.events - 1 : ctx.suppressed;
-  const subject = alertSubject(input, id, more > 0 ? ` (and ${more} more like it)` : "");
+  const subject = alertSubject(input, id, ctx.suppressed > 0 ? ` (and ${ctx.suppressed} more like it)` : "");
 
   const paragraphs = [input.what];
-  if (digest) {
-    paragraphs.push(
-      `To keep these notices to one an hour, this email covers ${digest.events} events of this kind from ${digest.addresses} address${digest.addresses === 1 ? "" : "es"}${
-        digest.since ? `, recorded since the last one at ${formatWhen(digest.since, ctx.timeZone)}` : ""
-      }. Each one is in the console's Security alerts list.`,
+  if (input.event === "auto_blacklist" && input.signedIn && !input.ownerLockout) {
+    paragraphs.unshift(
+      `${input.signedIn.username} signed in successfully from ${input.ip ?? "this address"} at ${formatWhen(input.signedIn.at, ctx.timeZone)}, and the address was flagged afterwards. It is now on the deny list and its sessions have ended.`,
     );
-  } else if (ctx.suppressed > 0) {
+  }
+  if (ctx.suppressed > 0) {
     paragraphs.push(
       `There ${ctx.suppressed === 1 ? "was" : "were"} also ${ctx.suppressed} more alert${ctx.suppressed === 1 ? "" : "s"} like this in the last ${ALERT_DEDUPE_MS / 60_000} minutes. They are recorded in the console but were not emailed one by one.`,
     );
@@ -234,7 +255,8 @@ export function composeAlert(
 
   const details: [string, string][] = [["Event", input.title]];
   details.push(["Portal", `${id.name} ${id.portal} (${ctx.host ?? id.host})`]);
-  details.push(["Account", input.user ? input.user.username : "None (no account involved)"]);
+  if (input.signedIn) details.push(["Signed in from this address", `${input.signedIn.username}, ${formatWhen(input.signedIn.at, ctx.timeZone)}`]);
+  details.push(["Account", input.user ? input.user.username : input.signedIn ? input.signedIn.username : "None (no account involved)"]);
   if (input.actor && input.actor.id !== input.user?.id) details.push(["Done by", input.actor.username]);
   details.push(["When", formatWhen(ctx.now, ctx.timeZone)]);
   details.push(["IP address", input.ip ?? "Not known"]);
@@ -245,7 +267,13 @@ export function composeAlert(
   }
   for (const d of input.details ?? []) details.push(d);
 
-  const actions = input.ownerLockout
+  const denyList = ctx.consoleUrl ? ` (${ctx.consoleUrl}#deny)` : "";
+  const actions = input.event === "auto_blacklist" && !input.ownerLockout && (input.signedIn || input.wasAllowlisted)
+    ? [
+        `If ${input.signedIn ? `${input.signedIn.username} was` : "the people on this address were"} only using the site normally, unblock the address from the console's Deny list${denyList}: each entry shows its evidence, and Unblock can put it back on the allowlist.`,
+        "If you don't recognise the activity, leave the block in place, and check the account's sessions and two-step sign-in.",
+      ]
+    : input.ownerLockout
     ? [
         "If the owner was blocked by mistake, unblock the address from the console's Deny list using another network (for example mobile data), or with the command above.",
         "If the owner's address really did this, leave the block in place and check the owner account's sessions and two-step sign-in.",
@@ -254,17 +282,19 @@ export function composeAlert(
   if (ctx.auditUrl) actions.push(`Review it in the console: ${ctx.auditUrl}`);
   actions.push(`If something here doesn't look right and you need help, reply to this email or write to ${id.supportEmail}.`);
 
+  const unblockCommand = `npx wrangler d1 execute onlyjewishgirls --remote --command "UPDATE ip_rules SET revoked_at = unixepoch() * 1000 WHERE kind = 'deny' AND ip = '${input.ip ?? "<ip>"}'"`;
   const callout = input.ownerLockout
     ? `This IP address (${input.ip ?? "unknown"}) belongs to the owner's live session, so the owner has been signed out and blocked from it. To unblock it, open the console's Deny list from another network, or run: npx wrangler d1 execute onlyjewishgirls --remote --command "UPDATE ip_rules SET revoked_at = unixepoch() * 1000 WHERE kind = 'deny' AND ip = '${input.ip ?? "<ip>"}'"`
-    : undefined;
+    : input.event === "auto_blacklist" && input.wasAllowlisted
+      ? `This IP address (${input.ip ?? "unknown"}) was on the IP allowlist, so the block has taken it off the allowlist and ended its sessions. If it belongs to you or your team, open the console's Deny list from another network to unblock it (and put it back on the allowlist), or run: ${unblockCommand}`
+      : undefined;
 
   const { html, text } = renderNotice(id, {
-    heading: input.ownerLockout ? "The owner's IP address was blocked automatically" : COPY[input.event].subject,
+    heading: headline(input),
     audience: { kind: "admin" },
     callout,
     paragraphs,
     details,
-    list: digest ? { heading: "Addresses (busiest first)", items: digest.items } : undefined,
     actions,
   });
   return { subject, text, html };
@@ -277,14 +307,12 @@ function siteOrigin(c: AlertContext, host: string): string {
 }
 
 /**
- * Records the alert and, unless it is throttled, emails it. The throttle decision and the row are one
- * statement, so concurrent alerts with the same (event, key), say a burst of parallel requests from one
- * noisy address, can't both see "nothing sent yet" and both send: exactly one is queued per 10 minutes,
- * the rest are recorded as throttled and counted as "and N more" in the next email.
- *
- * Anonymous-traffic events (DIGEST_EVENTS) use the same statement keyed by the event type alone, with a
- * one-hour window: one email per event type per hour, listing every address recorded since the last.
- * An owner-lockout auto-blacklist is never held back. Sign-in codes don't come through here at all.
+ * Records the alert and, unless it is anonymous traffic (shouldEmail) or throttled, emails it. The
+ * throttle decision and the row are one statement, so concurrent alerts with the same (event, key), say
+ * a burst of parallel requests from one noisy address, can't both see "nothing sent yet" and both send:
+ * exactly one is queued per 10 minutes, the rest are recorded as throttled and counted as "and N more
+ * like it" in the next email. Anonymous traffic is recorded as `suppressed` and never counts towards the
+ * throttle of the emails that do go out. Sign-in codes don't come through here at all.
  */
 export async function recordAndSendWith(c: AlertContext, input: AlertInput, host: string): Promise<number | null> {
   const now = input.now ?? Date.now();
@@ -292,20 +320,23 @@ export async function recordAndSendWith(c: AlertContext, input: AlertInput, host
   const routing = alertRouting(c.env, host);
   const origin = siteOrigin(c, host);
   const auditUrl = input.auditId ? `${origin}/admin#audit/${input.auditId}` : `${origin}/admin#alerts`;
-  const digested = DIGEST_EVENTS.has(input.event);
+  const email = shouldEmail(input) ? 1 : 0;
   const force = input.event === "test" || input.ownerLockout ? 1 : 0;
   const [row] = await c.db.all<{ id: number; status: string; suppressed: number }>(
     `INSERT INTO security_alerts (at, event, dedupe_key, subject, to_addr, from_addr, status, suppressed, ip, user_id,
                                   username, audit_id, owner_lockout)
      SELECT ?1, ?2, ?3, ?4, ?5, ?6, d.status,
-       CASE d.status WHEN 'throttled' THEN 0 ELSE (
-         SELECT COUNT(*) FROM security_alerts WHERE event = ?2 AND (?14 = 1 OR dedupe_key = ?3) AND status = 'throttled'
-           AND at > COALESCE((SELECT MAX(at) FROM security_alerts WHERE event = ?2 AND (?14 = 1 OR dedupe_key = ?3) AND status != 'throttled'), 0)
+       CASE WHEN d.status IN ('throttled', 'suppressed') THEN 0 ELSE (
+         SELECT COUNT(*) FROM security_alerts WHERE event = ?2 AND dedupe_key = ?3 AND status = 'throttled'
+           AND at > COALESCE((SELECT MAX(at) FROM security_alerts WHERE event = ?2 AND dedupe_key = ?3 AND status NOT IN ('throttled', 'suppressed')), 0)
        ) END,
        ?7, ?8, ?9, ?10, ?11
-     FROM (SELECT CASE WHEN ?12 = 0 AND EXISTS (
-             SELECT 1 FROM security_alerts WHERE event = ?2 AND (?14 = 1 OR dedupe_key = ?3) AND status != 'throttled' AND at > ?1 - ?13
-           ) THEN 'throttled' ELSE 'queued' END AS status) d
+     FROM (SELECT CASE
+             WHEN ?14 = 0 THEN 'suppressed'
+             WHEN ?12 = 0 AND EXISTS (
+               SELECT 1 FROM security_alerts WHERE event = ?2 AND dedupe_key = ?3 AND status NOT IN ('throttled', 'suppressed') AND at > ?1 - ?13
+             ) THEN 'throttled'
+             ELSE 'queued' END AS status) d
      RETURNING id, status, suppressed`,
     now,
     input.event,
@@ -319,13 +350,20 @@ export async function recordAndSendWith(c: AlertContext, input: AlertInput, host
     input.auditId ?? null,
     input.ownerLockout ? 1 : 0,
     force,
-    digested ? DIGEST_MS : ALERT_DEDUPE_MS,
-    digested ? 1 : 0,
+    ALERT_DEDUPE_MS,
+    email,
   );
   if (!row) return null;
-  if (row.status === "throttled") return row.id;
-  const digest = digested ? await collectDigest(c, input, row.id) : null;
-  const mail = composeAlert(input, { identity, timeZone: c.timeZone, auditUrl, suppressed: row.suppressed, now, host: host.replace(/:\d+$/, "") || undefined, digest });
+  if (row.status === "throttled" || row.status === "suppressed") return row.id;
+  const mail = composeAlert(input, {
+    identity,
+    timeZone: c.timeZone,
+    auditUrl,
+    suppressed: row.suppressed,
+    now,
+    host: host.replace(/:\d+$/, "") || undefined,
+    consoleUrl: `${origin}/admin`,
+  });
   const delivery = await deliverEmailWith(
     c.env,
     { to: routing.to, subject: mail.subject, text: mail.text, html: mail.html },
@@ -342,32 +380,4 @@ export async function recordAndSendWith(c: AlertContext, input: AlertInput, host
   // Keep a year of alerts.
   await c.db.run("DELETE FROM security_alerts WHERE at < ?", now - 365 * 86_400_000);
   return row.id;
-}
-
-/** The addresses behind the throttled events since the last email of this type, plus this one. */
-async function collectDigest(c: AlertContext, input: AlertInput, rowId: number): Promise<Digest> {
-  const [prev] = await c.db.all<{ at: number | null }>(
-    "SELECT MAX(at) AS at FROM security_alerts WHERE event = ? AND status != 'throttled' AND id < ?",
-    input.event,
-    rowId,
-  );
-  const since = prev?.at ?? null;
-  const rows = await c.db.all<{ addr: string; n: number }>(
-    `SELECT COALESCE(ip, dedupe_key) AS addr, COUNT(*) AS n FROM security_alerts
-     WHERE event = ? AND status = 'throttled' AND id < ? AND at > ?
-     GROUP BY addr`,
-    input.event,
-    rowId,
-    since ?? 0,
-  );
-  const counts = new Map(rows.map((r) => [r.addr, Number(r.n)]));
-  const self = input.ip ?? input.key;
-  counts.set(self, (counts.get(self) ?? 0) + 1);
-  const sorted = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "en", { numeric: true }));
-  const items = sorted.slice(0, DIGEST_LIST_MAX).map(([addr, n]) => `${addr} (${n} event${n === 1 ? "" : "s"})`);
-  if (sorted.length > DIGEST_LIST_MAX) {
-    const rest = sorted.length - DIGEST_LIST_MAX;
-    items.push(`and ${rest} more address${rest === 1 ? "" : "es"}`);
-  }
-  return { items, events: sorted.reduce((sum, [, n]) => sum + n, 0), addresses: sorted.length, since };
 }

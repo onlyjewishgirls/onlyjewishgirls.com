@@ -114,9 +114,10 @@ export const SETTINGS: SettingDef[] = [
     key: "auto_block_accounts",
     group: "auto_block",
     label: "Different accounts tried from one IP",
-    description: "Block after failed sign-ins against this many different accounts (or unknown names) in the window.",
+    description:
+      "Block after failed sign-ins against this many different real accounts in the window. Set high enough for colleagues behind one office address who each mistype before signing in (a sign-in settles that account's earlier failures). Usernames that don't exist are counted separately: 3 of them block.",
     type: "int",
-    default: 3,
+    default: 5,
     min: 2,
     max: 1000,
   },

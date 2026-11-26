@@ -8,7 +8,7 @@ import { getSettings } from "./settings";
 
 // Composing, deduping, recording and sending live in alert-core.ts (no Next.js imports, so the
 // Worker entry's CAPTCHA-wall alert goes through the same path).
-export { ALERT_DEDUPE_MS, DIGEST_EVENTS, DIGEST_MS, composeAlert, type AlertEvent, type AlertInput, type ComposedAlert } from "./alert-core";
+export { ALERT_DEDUPE_MS, composeAlert, shouldEmail, type AlertEvent, type AlertInput, type ComposedAlert } from "./alert-core";
 
 export function currentRouting(host: string): AlertRouting {
   return alertRouting(cfEnv(), host);

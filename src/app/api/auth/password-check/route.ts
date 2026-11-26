@@ -13,7 +13,7 @@ import { getAuth } from "@/server/session";
  */
 export const POST = api(async (req) => {
   const limit = await rateLimit(`password-check:${clientIp(req)}`, 120, 60_000);
-  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, null, "password checks", limit.firstRefusal);
 
   const body = await readJson(req);
   // Changing your own password while signed in: checked against your own details.

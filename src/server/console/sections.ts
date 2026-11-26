@@ -120,6 +120,8 @@ export async function bootstrap(ctx: ConsoleCtx) {
         { value: "active", label: "Active", tone: "ok" },
         { value: "locked", label: "Locked", tone: "warn" },
         { value: "suspended", label: "Suspended", tone: "danger" },
+        // Security alerts recorded without an email (anonymous traffic, PORTAL-STANDARD §6).
+        { value: "suppressed", label: "Recorded, not emailed", tone: "muted" },
       ],
     },
   });
@@ -471,7 +473,7 @@ async function visitorData(since: number, now: number) {
       since,
     ),
     all<{ ip: string; kind: string; n: number; accounts: number; first: number; last: number }>(
-      `SELECT ip, kind, COUNT(*) AS n, COUNT(DISTINCT subject) AS accounts, MIN(at) AS first, MAX(at) AS last
+      `SELECT ip, kind, COUNT(*) AS n, COUNT(DISTINCT CASE WHEN subject LIKE 'u%' THEN subject END) AS accounts, MIN(at) AS first, MAX(at) AS last
        FROM ip_strikes WHERE at >= ? GROUP BY ip, kind`,
       since,
     ),

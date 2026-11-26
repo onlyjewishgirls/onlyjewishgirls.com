@@ -1,4 +1,5 @@
 import type { NextRequest } from "next/server";
+import { isDecoyPath } from "@/lib/security";
 import { logEvent } from "@/server/events";
 import { clientIp } from "@/server/http";
 import { recordStrike } from "@/server/threat";
@@ -11,8 +12,12 @@ import { recordStrike } from "@/server/threat";
 async function handle(req: NextRequest) {
   const path = `/${(req.nextUrl.searchParams.get("p") ?? "").slice(0, 200)}`;
   const ip = clientIp(req);
-  await logEvent("security.decoy", { detail: { path, method: req.method } });
-  await recordStrike("decoy", { ip, subject: path, evidence: `${req.method} ${path}` });
+  // The rewrite in next.config.ts matches prefixes (e.g. "pma…", ".git…"), so a path only counts as a
+  // scanner hit when it is really one of DECOY_PATH_PATTERNS: "/pmail" or "/.github" is a plain 404.
+  if (isDecoyPath(path)) {
+    await logEvent("security.decoy", { detail: { path, method: req.method } });
+    await recordStrike("decoy", { ip, subject: path, evidence: `${req.method} ${path}` });
+  }
   return new Response("Not found", { status: 404, headers: { "Content-Type": "text/plain", "Cache-Control": "no-store" } });
 }
 

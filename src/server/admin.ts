@@ -1,5 +1,6 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
+import { cache } from "react";
 import { EVENT_GROUPS, type EventGroup } from "@/lib/admin/events";
 import { isAdminRole } from "@/lib/admin/permissions";
 import { bucketByDay, type DailyCount } from "@/lib/admin/days";
@@ -39,7 +40,13 @@ const STREAK_CERTAINLY_OVER_MS = 9 * DAY;
  * Admin pages. Anyone who isn't a fully signed-in admin with complete
  * two-step sign-in gets a plain 404, so the panel's existence isn't advertised.
  */
-export async function requireAdminPage(): Promise<PageAuth & { now: number }> {
+export const requireAdminPage = cache(requireAdminPageOnce);
+
+/**
+ * The admin layout and the page inside it both call requireAdminPage; React's per-request cache makes
+ * that one check, so a refused member counts as one refused request, not two (§7).
+ */
+async function requireAdminPageOnce(): Promise<PageAuth & { now: number }> {
   const auth = await getPageAuth();
   if (!auth) redirect("/login");
   if (auth.next !== "/home") redirect(auth.next);
@@ -71,10 +78,29 @@ export async function requireAdminApi(): Promise<AdminApiGuard> {
   return { ok: true, ctx };
 }
 
-/** §6/§7: a refused admin request is audited, alerted and counted as a strike against the address. */
+/** How long after losing the admin role an account's refused admin requests aren't counted as strikes. */
+export const FORMER_ADMIN_GRACE_MS = DAY;
+
+/**
+ * §6/§7: a refused admin request is audited, alerted and counted as a strike against the address.
+ * Except for an account that was an admin until an administrator changed its role in the last 24 hours:
+ * its open console tab or bookmarked admin page keeps asking, which is normal use, not probing. The
+ * refusal is still audited (and alerted); it just isn't a strike.
+ */
 export async function adminDenied(user: { id: number; username: string } | null, where: string, ip?: string | null) {
-  await logEvent("security.admin_denied", { user, detail: { where } });
-  await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
+  const formerAdmin = user ? await wasRecentlyAdmin(user.id) : false;
+  await logEvent("security.admin_denied", { user, detail: { where, ...(formerAdmin ? { former_admin: true } : {}) } });
+  if (!formerAdmin) await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
+}
+
+async function wasRecentlyAdmin(userId: number, now = Date.now()): Promise<boolean> {
+  const row = await first<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM events
+     WHERE user_id = ? AND type = 'admin.set_role' AND at > ? AND json_extract(detail, '$.from') IN ('admin', 'owner')`,
+    userId,
+    now - FORMER_ADMIN_GRACE_MS,
+  );
+  return (row?.n ?? 0) > 0;
 }
 
 // ---- Shared helpers ----

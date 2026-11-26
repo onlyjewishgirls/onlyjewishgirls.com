@@ -20,7 +20,7 @@ export const POST = api(async (req) => {
 
   const ip = clientIp(req);
   const ipLimit = await rateLimit(`forgot:ip:${ip}`, 10, HOUR);
-  if (!ipLimit.ok) return tooManyRequests(ipLimit.retryAfterSeconds, ip, "reset requests");
+  if (!ipLimit.ok) return tooManyRequests(ipLimit.retryAfterSeconds, ip, "reset requests", ipLimit.firstRefusal);
 
   const user = await findUserByLogin(identifier);
   if (!user) return fail(404, "no_account", `No account exists with the username or email "${typed.slice(0, 80)}".`, "identifier");

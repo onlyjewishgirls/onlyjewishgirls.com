@@ -41,7 +41,7 @@ export const POST = api(async (req) => {
   }
 
   const ipLimit = await rateLimit(`login:ip:${ip}`, 30, LOGIN_WINDOW_MS);
-  if (!ipLimit.ok) return tooManyRequests(ipLimit.retryAfterSeconds, ip, "sign-in attempts");
+  if (!ipLimit.ok) return tooManyRequests(ipLimit.retryAfterSeconds, ip, "sign-in attempts", ipLimit.firstRefusal);
 
   const user = await findUserByLogin(identifier);
   // What was typed is only recorded if it could be a username or email, never if it might be a password.

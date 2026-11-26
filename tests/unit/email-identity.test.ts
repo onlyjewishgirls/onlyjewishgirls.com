@@ -7,8 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { call, h, makeUser, resetHarness, settle, signInAs } from "./harness";
 
-const { recordAndSend, composeAlert, DIGEST_MS } = await import("@/server/alerts");
+const { recordAndSend, composeAlert, shouldEmail } = await import("@/server/alerts");
 const { autoBlock } = await import("@/server/threat");
+const { addRule } = await import("@/server/ip-rules");
 const { resolveSettings } = await import("@/lib/settings-schema");
 const { mailIdentity, introLines } = await import("@/server/mail-template");
 const { POST: forgot } = await import("@/app/api/auth/forgot-password/route");
@@ -73,6 +74,11 @@ function consoleCall(method: string, path: string, body?: unknown) {
   });
 }
 
+/** A successful sign-in from `ip`, as the sign-in routes record it in the audit log. */
+function signedInFrom(userId: number, username: string, ip: string, at = Date.now() - 60_000) {
+  h.d1.exec("INSERT INTO events (at, type, user_id, username, ip) VALUES (?, 'signin.complete', ?, ?, ?)", at, userId, username, ip);
+}
+
 /** Sends every kind of email the site sends, through the real routes, and returns them by name. */
 async function everyEmail(): Promise<Record<string, Plunk>> {
   const out: Record<string, Plunk> = {};
@@ -116,12 +122,19 @@ async function everyEmail(): Promise<Record<string, Plunk>> {
   await settle();
   take("failedSignin", (m) => m.subject.includes("Failed sign-in"));
 
+  // Someone who signed in from an address that is then flagged: emailed, naming them.
   h.ip = "192.0.2.66";
+  signedInFrom(member.id, "codey", h.ip);
   await call(decoy, "/api/decoy?p=.env");
   await settle();
-  take("decoy", (m) => m.subject.includes("decoy path"));
-  take("autoBlacklist", (m) => m.subject.includes("blocked automatically"));
-  take("hostile", (m) => m.subject.includes("hostile"));
+  take("signedInBlock", (m) => m.subject.includes("after codey signed in from it"));
+
+  // An allowlisted address that is flagged: the owner-lockout style notice.
+  h.ip = "192.0.2.77";
+  await addRule({ kind: "allow", ip: "192.0.2.77", label: "Office" });
+  await call(decoy, "/api/decoy?p=wp-login.php");
+  await settle();
+  take("allowlistedBlock", (m) => m.subject.includes("allowlisted IP address"));
 
   h.ip = "203.0.113.10";
   await signInAs(owner.id);
@@ -135,7 +148,7 @@ describe("every email carries the business's identity (§6)", () => {
   it("covers each kind of email, with the business in the sender, subject and reply-to, and nothing Plunk would track", async () => {
     const mails = await everyEmail();
     expect(Object.keys(mails).sort()).toEqual(
-      ["adminReset", "autoBlacklist", "changed", "code", "decoy", "failedSignin", "hostile", "message", "ownerLockout", "reset"].sort(),
+      ["adminReset", "allowlistedBlock", "changed", "code", "failedSignin", "message", "ownerLockout", "reset", "signedInBlock"].sort(),
     );
     for (const [name, m] of Object.entries(mails)) {
       expect([name, m.subject.startsWith("[OnlyJewishGirls] ")]).toEqual([name, true]);
@@ -194,7 +207,7 @@ describe("every email carries the business's identity (§6)", () => {
     expect(links(mails.message.body).map((l) => l.href)).not.toContain("https://evil.example/x");
     expect(links(mails.message.body).map((l) => l.href)).toContain("https://onlyjewishgirls.com/home");
     // Alerts never link to a password page: only the console.
-    for (const name of ["failedSignin", "decoy", "autoBlacklist", "hostile", "ownerLockout", "changed"]) {
+    for (const name of ["failedSignin", "signedInBlock", "allowlistedBlock", "ownerLockout", "changed"]) {
       expect([name, links(mails[name].body).some((l) => /password/.test(l.href))]).toEqual([name, false]);
     }
   });
@@ -221,7 +234,7 @@ describe("every email carries the business's identity (§6)", () => {
   });
 
   it("the HTML still reads correctly as plain text: the facts, the actions and the footer", async () => {
-    const { failedSignin, code, changed, autoBlacklist } = await everyEmail();
+    const { failedSignin, code, changed, signedInBlock } = await everyEmail();
     const alert = plainText(failedSignin.body);
     for (const s of [
       "Failed sign-in attempt",
@@ -240,12 +253,12 @@ describe("every email carries the business's identity (§6)", () => {
     }
     for (const s of ["Account: codey", "Requested: ", "IP address: 203.0.113.10", "Approximate location: Lakewood, New Jersey, US", "Device: Safari on Mac"]) expect(plainText(code.body)).toContain(s);
     expect(plainText(changed.body)).toContain('choose "Forgot password?" on the sign-in page');
-    expect(plainText(autoBlacklist.body)).toContain("IP address: 192.0.2.66");
+    expect(plainText(signedInBlock.body)).toContain("IP address: 192.0.2.66");
     // No layout tables or images for the converter to trip over.
-    for (const m of [failedSignin, code, changed, autoBlacklist]) expect(m.body).not.toMatch(/<(table|img)\b/i);
+    for (const m of [failedSignin, code, changed, signedInBlock]) expect(m.body).not.toMatch(/<(table|img)\b/i);
   });
 
-  it("the owner-lockout notice is boxed before everything else, and never held back by the digest", async () => {
+  it("the owner-lockout notice is boxed before everything else", async () => {
     const { ownerLockout } = await everyEmail();
     const text = plainText(ownerLockout.body);
     expect(text.indexOf("belongs to the owner's live session")).toBeLessThan(text.indexOf("Details"));
@@ -279,44 +292,99 @@ describe("every email carries the business's identity (§6)", () => {
   });
 });
 
-describe("anonymous-traffic alerts are digested and only go to ALERTS_EMAIL_TO (§6)", () => {
-  const blacklist = (i: number, now: number) =>
-    recordAndSend(
-      { event: "auto_blacklist", title: "IP auto-blacklisted", key: `192.0.2.${i}`, what: `192.0.2.${i} was blocked automatically: requested a decoy path.`, ip: `192.0.2.${i}`, now },
-      "onlyjewishgirls.com",
-    );
+describe("anonymous traffic is recorded without an email; a flagged signed-in address is emailed (§6)", () => {
+  const scanner = async (i: number) => {
+    h.ip = `192.0.2.${i}`;
+    await call(decoy, i % 2 ? "/api/decoy?p=.env" : "/api/decoy?p=wp-admin/setup.php");
+    await settle();
+  };
 
-  it("30 auto-blacklist events in an hour send one email; the next one lists them (top 20 and 'N more')", async () => {
-    const t0 = Date.now();
-    for (let i = 1; i <= 30; i++) await blacklist(i, t0 + i * 60_000);
-    expect(sent).toHaveLength(1);
-    const rows = h.d1.rows<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'auto_blacklist'");
-    expect(rows).toHaveLength(30);
-    expect(rows.filter((r) => r.status === "throttled")).toHaveLength(29);
-
-    // The hour is up: one email, folding in the 29 held back.
-    await blacklist(2, t0 + DIGEST_MS + 2 * 60_000);
-    expect(sent).toHaveLength(2);
-    const digest = sent[1];
-    expect(digest.subject).toBe("[OnlyJewishGirls] IP address blocked automatically on the member site (and 29 more like it)");
-    const text = plainText(digest.body);
-    expect(text).toContain("this email covers 30 events of this kind from 29 addresses");
-    expect(text).toContain("Addresses (busiest first)");
-    expect(text).toContain("192.0.2.2 (2 events)\n192.0.2.3 (1 event)\n192.0.2.4 (1 event)");
-    expect(text).toContain("and 9 more addresses");
-    expect(text.match(/^192\.0\.2\.\d+ \(\d events?\)$/gm)).toHaveLength(20);
-    expect(h.d1.one<{ suppressed: number }>("SELECT suppressed FROM security_alerts ORDER BY id DESC")!.suppressed).toBe(29);
+  it("an anonymous scanner burst from 30 addresses sends no email, and every event is recorded", async () => {
+    for (let i = 1; i <= 30; i++) await scanner(i);
+    expect(sent).toEqual([]);
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny' AND source = 'auto'")).toHaveLength(30);
+    const rows = h.d1.rows<{ event: string; status: string; n: number }>("SELECT event, status, COUNT(*) AS n FROM security_alerts GROUP BY event, status ORDER BY event");
+    expect(rows).toEqual([
+      { event: "auto_blacklist", status: "suppressed", n: 30 },
+      { event: "decoy_hit", status: "suppressed", n: 30 },
+      { event: "hostile_visitor", status: "suppressed", n: 30 },
+    ]);
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'security.auto_blocked'")!.n).toBe(30);
   });
 
-  it("is per event type: a decoy hit isn't held back by an auto-blacklist email", async () => {
-    const t0 = Date.now();
-    await blacklist(1, t0);
-    await recordAndSend({ event: "decoy_hit", title: "Requested a scanner/decoy path", key: "192.0.2.9", what: "x", ip: "192.0.2.9", now: t0 + 1000 }, "onlyjewishgirls.com");
-    await blacklist(2, t0 + 2000);
-    expect(sent.map((m) => m.subject)).toEqual([
-      "[OnlyJewishGirls] IP address blocked automatically on the member site",
-      "[OnlyJewishGirls] Request to a scanner decoy path on the member site",
+  it("a member who signs in and then trips a detector from the same address is blocked, with one email naming the account", async () => {
+    const member = await makeUser({ username: "chana" });
+    h.ip = "198.51.100.40";
+    await signInAs(member.id);
+    signedInFrom(member.id, "chana", h.ip, Date.now() - 5 * 60_000);
+    await call(decoy, "/api/decoy?p=.git/config");
+    await settle();
+    expect(h.d1.one<{ ip: string }>("SELECT ip FROM ip_rules WHERE kind = 'deny'")?.ip).toBe("198.51.100.40");
+    expect(h.d1.rows("SELECT * FROM sessions WHERE user_id = ?", member.id)).toEqual([]);
+    expect(sent).toHaveLength(1);
+    const [mail] = sent;
+    expect(mail).toMatchObject({ to: SOC, subject: "[OnlyJewishGirls] IP address blocked automatically after chana signed in from it on the member site" });
+    const text = plainText(mail.body);
+    for (const s of [
+      "chana signed in successfully from 198.51.100.40 at ",
+      "Signed in from this address: chana, ",
+      "Account: chana",
+      "198.51.100.40 was blocked automatically: Requested a scanner/decoy path.",
+      "Evidence: GET /.git/config",
+      "unblock the address from the console's Deny list (https://onlyjewishgirls.com/admin#deny)",
+    ]) {
+      expect(text).toContain(s);
+    }
+    // The decoy hit and the hostile score from the same address stay recorded, not emailed.
+    expect(h.d1.rows<{ event: string; status: string }>("SELECT event, status FROM security_alerts ORDER BY id")).toEqual([
+      { event: "decoy_hit", status: "suppressed" },
+      { event: "hostile_visitor", status: "suppressed" },
+      { event: "auto_blacklist", status: "sent" },
     ]);
+  });
+
+  it("a sign-in more than 24 hours ago doesn't count: the block is recorded, not emailed", async () => {
+    const member = await makeUser({ username: "old" });
+    h.ip = "198.51.100.41";
+    signedInFrom(member.id, "old", h.ip, Date.now() - 25 * 60 * 60_000);
+    await call(decoy, "/api/decoy?p=.env");
+    await settle();
+    expect(sent).toEqual([]);
+    expect(h.d1.one<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'auto_blacklist'")?.status).toBe("suppressed");
+  });
+
+  it("an allowlisted address that is flagged gets the owner-lockout style notice", async () => {
+    h.ip = "198.51.100.50";
+    await addRule({ kind: "allow", ip: "198.51.100.50", label: "Office" });
+    await call(decoy, "/api/decoy?p=.env");
+    await settle();
+    expect(sent).toHaveLength(1);
+    expect(sent[0].subject).toBe("[OnlyJewishGirls] An allowlisted IP address was blocked automatically on the member site");
+    const text = plainText(sent[0].body);
+    expect(text.indexOf("was on the IP allowlist")).toBeLessThan(text.indexOf("Details"));
+    expect(sent[0].body).toContain("border-left:4px solid #b42318");
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM ip_rules WHERE kind = 'allow' AND revoked_at IS NULL")!.n).toBe(0);
+  });
+
+  it("the owner's address is emailed as an owner lockout even with no sign-in event", async () => {
+    const owner = await makeUser({ username: "owner", role: "owner" });
+    h.ip = "198.51.100.60";
+    await signInAs(owner.id);
+    await autoBlock("198.51.100.60", "decoy", "Requested a scanner/decoy path.", ["GET /.env"], resolveSettings({}));
+    await settle();
+    expect(sent.map((m) => m.subject)).toEqual(["[OnlyJewishGirls] The owner's IP address was blocked automatically on the member site"]);
+  });
+
+  it("failed sign-ins for accounts that don't exist and country refusals are recorded, not emailed", async () => {
+    h.ip = "198.51.100.70";
+    await call(login, "/api/auth/login", { body: { identifier: "nobody-here", password: "x" } });
+    await settle();
+    expect(sent).toEqual([]);
+    expect(h.d1.one<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'failed_signin'")?.status).toBe("suppressed");
+    expect(shouldEmail({ event: "country_blocked", title: "x", key: "country:DE", what: "x" })).toBe(false);
+    expect(shouldEmail({ event: "admin_access_denied", title: "x", key: "x", what: "x" })).toBe(false);
+    expect(shouldEmail({ event: "admin_access_denied", title: "x", key: "x", what: "x", user: { id: 1, username: "m" } })).toBe(true);
+    expect(shouldEmail({ event: "failed_signin", title: "x", key: "x", what: "x", user: { id: 1, username: "m" } })).toBe(true);
   });
 
   it("account notices keep their own per-account dedupe (not the hourly digest)", async () => {
@@ -339,6 +407,7 @@ describe("anonymous-traffic alerts are digested and only go to ALERTS_EMAIL_TO (
     await settle();
     const events = h.d1.rows<{ event: string; to_addr: string }>("SELECT event, to_addr FROM security_alerts");
     expect(new Set(events.map((e) => e.event))).toEqual(new Set(["admin_access_denied", "auto_blacklist", "decoy_hit", "hostile_visitor"]));
+    // The member's refused console requests are emailed (an account is involved); the anonymous scanner isn't.
     expect(events.every((e) => e.to_addr === SOC)).toBe(true);
     expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((m) => m.to === SOC)).toBe(true);
@@ -354,8 +423,6 @@ describe("anonymous-traffic alerts are digested and only go to ALERTS_EMAIL_TO (
       sha256(token), u.id, Date.now(), Date.now(), Date.now() + 600_000, h.ip,
     );
     h.cookies.set("__Host-ojg_session", token);
-    // A digest in flight for anonymous traffic doesn't touch it.
-    await blacklist(1, Date.now());
     sent = [];
     expect((await call(sendCode, "/api/mfa/email/send", { body: {} })).data.ok).toBe(true);
     expect(sent).toHaveLength(1);

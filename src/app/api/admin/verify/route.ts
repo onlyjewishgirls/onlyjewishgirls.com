@@ -24,7 +24,7 @@ export const POST = api(async (req) => {
 
   const failureKey = mfaFailureKey(user.id);
   const limit = await isRateLimited(failureKey, MFA_FAILURES_PER_HOUR);
-  if (limit.limited) return tooManyRequests(limit.retryAfterSeconds);
+  if (limit.limited) return tooManyRequests(limit.retryAfterSeconds, null, "verification attempts");
 
   const body = await readJson(req);
   const method = body.method === "totp" ? "totp" : "passkey";

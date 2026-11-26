@@ -44,7 +44,7 @@ describe("country rule enforcement (§9)", () => {
   beforeEach(() => resetHarness());
   afterEach(() => vi.unstubAllGlobals());
 
-  it("refuses sign-in from a refused country with country_blocked, audits and alerts once per country per 10 min", async () => {
+  it("refuses sign-in from a refused country with country_blocked, audits it and records the alert without an email (§6)", async () => {
     await makeUser({ username: "rachel" });
     setRule("allow", ["US", "CA"]);
     h.cf = { country: "DE" };
@@ -54,9 +54,10 @@ describe("country rule enforcement (§9)", () => {
     await call(login, "/api/auth/login", { body: { identifier: "rachel", password: "x" } });
     await settle();
     expect(h.d1.one("SELECT COUNT(*) AS n FROM events WHERE type = 'signin.country_blocked'")!.n).toBe(2);
+    // Anonymous traffic: recorded for the console, never emailed.
     expect(h.d1.rows<{ status: string; dedupe_key: string }>("SELECT status, dedupe_key FROM security_alerts WHERE event = 'country_blocked'")).toEqual([
-      expect.objectContaining({ dedupe_key: "country:DE" }),
-      expect.objectContaining({ status: "throttled" }),
+      expect.objectContaining({ dedupe_key: "country:DE", status: "suppressed" }),
+      expect.objectContaining({ dedupe_key: "country:DE", status: "suppressed" }),
     ]);
     // Not a failed password: no strike, no lockout counting.
     expect(h.d1.rows("SELECT * FROM ip_strikes")).toHaveLength(0);

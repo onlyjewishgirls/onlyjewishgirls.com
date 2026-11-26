@@ -127,7 +127,8 @@ Every security event emails ([`src/server/event-alerts.ts`](src/server/event-ale
 - **From** `ALERTS_EMAIL_FROM`, else `ALERT_EMAIL_FROM`, else `securityalerts@<apex>`; **to** `ALERTS_EMAIL_TO`, else `ALERT_EMAIL_TO`, else `soc@<apex>`. Both are set in `wrangler.jsonc` `vars` (`securityalerts@onlyjewishgirls.com` → `soc@onlyjewishgirls.com`).
 - Sent through the same Plunk transport as the other emails (the alert log records `plunk` as the provider), after the response (`ctx.waitUntil`). The sender must be on a domain verified in Plunk.
 - One email per (event, key) per 10 minutes; the rest are recorded as throttled and the next email says "and N more like it". Every alert, sent or not, is in the `security_alerts` table and the console.
-- Alerts about anonymous traffic (auto-blacklist, hostile visitor, decoy hit, refused admin request) are an hourly digest: at most one email per event type per hour, and the next one lists the addresses recorded since the last (busiest first, top 20, then "and N more addresses"). Same single-statement throttle, keyed by the event type. An owner lockout is never held back. They only ever go to `ALERTS_EMAIL_TO`.
+- **Anonymous traffic sends no email** (owner, 2026-11-26; `shouldEmail` in [`src/server/alert-core.ts`](src/server/alert-core.ts)): scanner/decoy hits, hostile visitors, country-rule refusals, failed sign-ins for accounts that don't exist, refused admin requests with no account, and auto-blocks of an address nobody signed in from in the last 24 hours. They are still recorded: the audit log, the deny list, and `security_alerts` with status `suppressed` ("Recorded, not emailed" in the console).
+- **An auto-block is emailed** when someone signed in successfully from the address in the last 24 hours (the audit log's sign-ins, or a full session from it): the email names the account and when it signed in, what flagged the address, the evidence, and how to unblock it from the Deny list. An allowlisted address and the owner's own address are always emailed, as a boxed notice at the top.
 
 ### Country rule
 
@@ -135,9 +136,18 @@ Console → IP allowlist → **Countries** ([`src/server/country-rule.ts`](src/s
 
 ### Auto-blacklist
 
-Being on the allowlist does not exempt an address. When one address (default thresholds, all in Settings) gets 5 wrong passwords or 5 wrong two-step codes in 15 minutes, fails against 3 different accounts, makes 3 admin requests without permission, trips rate limits 3 times, reaches the hostile threat score (80), requests a scanner path (`/.env`, `/.git/`, `/wp-admin`, `/phpmyadmin`, `*.php`, …; rewritten to [`/api/decoy`](src/app/api/decoy/route.ts) by `next.config.ts`) or sends an injection/traversal pattern, then with no human step it is taken off the allowlist (the entry is kept, marked revoked), put on the deny list (`source='auto'`, reason and evidence), every session from it ends, the audit log records it and an alert goes out. Blocks are permanent unless Settings → Block duration says otherwise. `127.0.0.1`/`::1` are never blocked (local development and tests).
+**Normal use is never flagged** (PORTAL-STANDARD §7; [`tests/unit/normal-use.test.ts`](tests/unit/normal-use.test.ts) replays a busy member, admin and owner session with text like `O'Brien`, `<b>hi</b>`, `SELECT * FROM`, `../notes`, URLs, emoji and Hebrew everywhere, and checks nothing is flagged):
 
-If the address is the owner's own live session it is still blocked, and the alert subject starts with **OWNER LOCKOUT**. To get back in: unblock it from the console on another network, or
+- Injection signatures are checked in API URLs (path and query) and in the sign-in/forgot-password identifier only, never in what a signed-in person types (names, notes, messages, reasons, labels, search boxes, the visit tracker's page path).
+- A rate limit counts as one trip when a burst first goes over it, not once per refused request.
+- **Shared office address:** a successful sign-in settles that account's earlier failures from the same address (they stay in the audit log but stop counting). The "several accounts" rule counts real accounts from 5 distinct accounts in 15 minutes, so colleagues behind one address who each mistype before signing in are never blocked; names that match no account still block from 3 (username guessing). Per-account lockout is unchanged.
+- Mistakes alone (each under its threshold) can't reach the hostile threat score.
+- An admin page counts one refused request per page view (the layout and page share one check), and an account demoted from admin in the last 24 hours isn't counted at all (its open console keeps asking).
+- A path only counts as a scanner hit if it is really on the decoy list (`/pmail` or `/.github` reach the decoy handler through the rewrite's prefix match but are plain 404s).
+
+Being on the allowlist does not exempt an address. When one address (default thresholds, all in Settings) gets 5 wrong passwords or 5 wrong two-step codes in 15 minutes, fails against 5 different real accounts or 3 usernames that don't exist, makes 3 admin requests without permission, trips rate limits 3 times, reaches the hostile threat score (80), requests a scanner path (`/.env`, `/.git/`, `/wp-admin`, `/phpmyadmin`, `*.php`, …; rewritten to [`/api/decoy`](src/app/api/decoy/route.ts) by `next.config.ts`) or sends an injection/traversal pattern, then with no human step it is taken off the allowlist (the entry is kept, marked revoked), put on the deny list (`source='auto'`, reason and evidence), every session from it ends, the audit log records it and an alert goes out. Blocks are permanent unless Settings → Block duration says otherwise. `127.0.0.1`/`::1` are never blocked (local development and tests).
+
+If the address is the owner's own live session it is still blocked, and the email says so in a boxed notice at the top ("The owner's IP address was blocked automatically"). To get back in: unblock it from the console on another network, or
 
 ```bash
 npx wrangler d1 execute onlyjewishgirls --remote --command "UPDATE ip_rules SET revoked_at = unixepoch() * 1000 WHERE kind = 'deny' AND ip = '203.0.113.7'"
