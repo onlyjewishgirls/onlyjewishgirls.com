@@ -14,12 +14,14 @@ export interface RequestInfo {
   userAgent: string | null;
   country: string | null;
   city: string | null;
+  /** Cloudflare's region (state/province) estimate; shown in emails as part of the approximate location. */
+  region?: string | null;
 }
 
 /** Where the current request came from. Cloudflare sets CF-Connecting-IP and the cf location. */
 export async function requestInfo(): Promise<RequestInfo> {
   const h = await headers();
-  let cf: { country?: string; city?: string } | undefined;
+  let cf: { country?: string; city?: string; region?: string } | undefined;
   try {
     cf = getCloudflareContext().cf as typeof cf;
   } catch {
@@ -30,6 +32,7 @@ export async function requestInfo(): Promise<RequestInfo> {
     userAgent: h.get("user-agent")?.slice(0, 300) ?? null,
     country: cf?.country ?? null,
     city: cf?.city ?? null,
+    region: cf?.region ?? null,
   };
 }
 

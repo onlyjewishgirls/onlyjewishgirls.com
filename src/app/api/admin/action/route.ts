@@ -118,7 +118,7 @@ export const POST = api(async (req) => {
 
     case "send_password_reset": {
       if (target.suspendedAt !== null) return jsonError(409, "Lift the suspension first. Reset links don't work on suspended accounts.");
-      await sendPasswordResetEmail(req, target, now);
+      await sendPasswordResetEmail(req, target, now, { byAdmin: true });
       return done(`Sent a password reset link to ${target.email}. It works once and expires in 30 minutes.`);
     }
 

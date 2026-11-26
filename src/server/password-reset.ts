@@ -3,8 +3,9 @@ import type { NextRequest } from "next/server";
 import { checkPassword } from "@/lib/password/policy";
 import { randomToken, sha256 } from "./crypto";
 import { getDictionary } from "./dictionary";
-import { APP_NAME, cfEnv, inBackground, isLocalHost } from "./env";
-import { sendEmail, simpleHtml } from "./mailer";
+import { composePasswordChangedEmail, composeResetEmail, requestFacts } from "./account-mail";
+import { cfEnv, inBackground, isLocalHost } from "./env";
+import { sendEmail, siteIdentity } from "./mailer";
 import { createPasswordReset, findPasswordResetUser, type User } from "./users";
 
 export const RESET_LINK_MINUTES = 30;
@@ -39,44 +40,35 @@ function siteOrigin(req: NextRequest): string {
 }
 
 
-export async function sendPasswordResetEmail(req: NextRequest, user: User, now = Date.now()) {
+/**
+ * Emails a reset link. `byAdmin`: an administrator sent it from the console or the admin panel, so the
+ * email says so instead of "You asked to reset…".
+ */
+export async function sendPasswordResetEmail(req: NextRequest, user: User, now = Date.now(), { byAdmin = false } = {}) {
   const token = randomToken();
   await createPasswordReset(user.id, hashResetToken(token), now, now + RESET_LINK_MINUTES * 60_000);
   const url = `${siteOrigin(req)}/reset-password?token=${token}`;
-  const lines = [
-    `Hi ${user.firstName},`,
-    `Someone (hopefully you) asked to reset the password for ${APP_NAME} account "${user.username}". This link works once and expires in ${RESET_LINK_MINUTES} minutes.`,
-    "If you didn't ask for this, ignore this email. Your password won't change, and nobody can sign in without your passkey or authenticator app.",
-  ];
-  inBackground(
-    sendEmail(
-      {
-        to: user.email,
-        subject: `Reset your ${APP_NAME} password`,
-        text: `${lines[0]}\n\n${lines[1]}\n\n${url}\n\n${lines[2]}\n`,
-        html: simpleHtml(lines, { label: "Choose a new password", url }),
-      },
-      { local: isLocalHost(new URL(req.url).host) },
-    ),
-  );
+  const mail = composeResetEmail(siteIdentity(), {
+    firstName: user.firstName,
+    username: user.username,
+    url,
+    minutes: RESET_LINK_MINUTES,
+    byAdmin,
+    facts: await requestFacts(now),
+  });
+  inBackground(sendEmail({ to: user.email, ...mail }, { local: isLocalHost(new URL(req.url).host) }));
 }
 
 export function sendPasswordChangedEmail(req: NextRequest, user: User, { keptThisDevice = false } = {}) {
-  const url = `${siteOrigin(req)}/forgot-password`;
-  const lines = [
-    `Hi ${user.firstName},`,
-    `The password for your ${APP_NAME} account "${user.username}" was just changed, and you were signed out on every ${keptThisDevice ? "other " : ""}device.`,
-    "If this wasn't you, reset your password right away and make sure your email account is secure.",
-  ];
   inBackground(
-    sendEmail(
-      {
-        to: user.email,
-        subject: `Your ${APP_NAME} password was changed`,
-        text: `${lines.join("\n\n")}\n\n${url}\n`,
-        html: simpleHtml(lines, { label: "Reset my password", url }),
-      },
-      { local: isLocalHost(new URL(req.url).host) },
-    ),
+    (async () => {
+      const mail = composePasswordChangedEmail(siteIdentity(), {
+        firstName: user.firstName,
+        username: user.username,
+        keptThisDevice,
+        facts: await requestFacts(),
+      });
+      return sendEmail({ to: user.email, ...mail }, { local: isLocalHost(new URL(req.url).host) });
+    })(),
   );
 }

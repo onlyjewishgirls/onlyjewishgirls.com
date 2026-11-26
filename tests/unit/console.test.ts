@@ -203,7 +203,7 @@ describe("console API: settings, audit, alerts", () => {
     expect(entry.alert_id).toBeTruthy();
     const alerts = (await c("GET", "alerts")).data as Record<string, any>;
     expect(alerts.routing).toMatchObject({ from: "securityalerts@onlyjewishgirls.com", to: "soc@onlyjewishgirls.com" });
-    expect(alerts.items[0]).toMatchObject({ subject: "[SECURITY] OnlyJewishGirls — Suspended the account", audit_id: entry.id });
+    expect(alerts.items[0]).toMatchObject({ subject: "[OnlyJewishGirls] Account status changed on the member site", audit_id: entry.id });
     // Deep link from the alert email, and the person filter (actor or target).
     expect((await c("GET", `audit/${entry.id}`)).data).toMatchObject({ ok: true, entry: { id: entry.id, alert_id: entry.alert_id } });
     const byPerson = (await c("GET", `audit?person=${member.id}`)).data as Record<string, any>;

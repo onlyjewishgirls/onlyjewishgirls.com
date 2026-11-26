@@ -63,9 +63,16 @@
   // TURNSTILE_SECRET_KEY (`wrangler secret put TURNSTILE_SECRET_KEY`), never a var. Until both exist
   // every request gets a 503 (fail closed). GATE_MODE "off" (dashboard, plain variable) is the
   // break-glass switch.
+  // MAIL_*: who every email says it is from (PORTAL-STANDARD §6, src/server/mail-template.ts): the
+  // sender name and subject tag, the legal name, website and support address in the footer, and the
+  // support address as the reply-to. Defaults in code match these.
   "vars": {
     "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",
-    "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com"
+    "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com",
+    "MAIL_BUSINESS_NAME": "OnlyJewishGirls",
+    "MAIL_BUSINESS_LEGAL_NAME": "OnlyJewishGirls",
+    "MAIL_WEBSITE": "https://onlyjewishgirls.com",
+    "MAIL_SUPPORT_EMAIL": "info@onlyjewishgirls.com"
   },
   "observability": {
     // Workers Logs: every request, console output and uncaught exception,

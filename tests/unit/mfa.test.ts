@@ -116,8 +116,8 @@ const { findUserById } = await import("@/server/users");
 describe("email codes, the third factor (§3)", () => {
   let mails: { to: string; subject: string; body: string }[] = [];
   // Security alerts go through the same transport; only the sign-in code emails count here.
-  const codeMails = () => mails.filter((m) => m.subject.endsWith("sign-in code"));
-  const lastCode = () => /code is (\d{6})/.exec(codeMails()[codeMails().length - 1].body)![1];
+  const codeMails = () => mails.filter((m) => m.subject === "[OnlyJewishGirls] Sign-in code requested on the member site");
+  const lastCode = () => />(\d{6})<\/p>/.exec(codeMails()[codeMails().length - 1].body)![1];
   const configure = () => {
     h.env.PLUNK_API_KEY = "sk_test";
     h.env.EMAIL_FROM = "OnlyJewishGirls <no-reply@onlyjewishgirls.com>";
@@ -142,7 +142,7 @@ describe("email codes, the third factor (§3)", () => {
     await passwordStage(u.id);
     const sent = await call(sendCode, "/api/mfa/email/send", { body: {} });
     expect(sent.data.message).toMatch(/^We emailed a 6-digit code to em•••@example\.com\. It expires in 10 minutes\.$/);
-    expect(codeMails()[0]).toMatchObject({ to: "emailer@example.com", subject: expect.stringMatching(/^\d{6} is your OnlyJewishGirls sign-in code$/) });
+    expect(codeMails()[0]).toMatchObject({ to: "emailer@example.com", subject: "[OnlyJewishGirls] Sign-in code requested on the member site" });
     expect(h.d1.one<{ code_hash: string }>("SELECT code_hash FROM email_codes")!.code_hash).not.toContain(lastCode());
     const code = lastCode();
     const wrong = await call(verifyCode, "/api/mfa/email/verify", { body: { code: code === "000000" ? "111111" : "000000" } });

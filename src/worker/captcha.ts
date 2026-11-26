@@ -112,10 +112,10 @@ export async function gateOffAlert(detail: GateEventDetail, env: CloudflareEnv, 
     .run();
   if (!claim.meta.changes) return null;
   return recordAndSendWith(
-    { env, db: store(d1), site: SITE_NAME, timeZone: settings.time_zone, local: isLoopbackHost(detail.host) },
+    { env, db: store(d1), timeZone: settings.time_zone, local: isLoopbackHost(detail.host) },
     {
       event: "captcha_off",
-      title: "The CAPTCHA wall is OFF",
+      title: "The CAPTCHA wall is off",
       key: day,
       what: `GATE_MODE is "off" on the Worker, so every visitor reaches ${detail.host} without solving a CAPTCHA. Delete the GATE_MODE variable to turn the wall back on. This email repeats once a day while it stays off.`,
       details: [

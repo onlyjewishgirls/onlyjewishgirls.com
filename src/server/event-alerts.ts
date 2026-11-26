@@ -75,17 +75,24 @@ function dedupeKey(type: EventType, e: Logged, ip: string | null): string {
   return who;
 }
 
+/** "Wrong password (account miriam)." in plain words; the detail fields go in the details list. */
 function describe(type: EventType, e: Logged): string {
   const label = eventLabel(type);
   const target = e.user?.username;
   const actor = e.actor && e.actor.id !== e.user?.id ? e.actor.username : null;
-  const extra = e.detail
-    ? Object.entries(e.detail)
-        .filter(([, v]) => v !== null && v !== undefined && typeof v !== "object")
-        .map(([k, v]) => `${k}=${String(v)}`)
-        .join(", ")
-    : "";
-  return `${label}${target ? ` — account ${target}` : ""}${actor ? `, by ${actor}` : ""}${extra ? ` (${extra})` : ""}.`;
+  return `${label}${target ? ` (account ${target})` : ""}${actor ? `, by ${actor}` : ""}.`;
+}
+
+/** The event's detail fields as "Label: value" lines, e.g. identifier → "Identifier: miriam". */
+function detailRows(e: Logged): [string, string][] {
+  if (!e.detail) return [];
+  return Object.entries(e.detail)
+    .filter(([, v]) => v !== null && v !== undefined && typeof v !== "object")
+    .slice(0, 12)
+    .map(([k, v]) => {
+      const label = k.replace(/_/g, " ");
+      return [label.charAt(0).toUpperCase() + label.slice(1), String(v).slice(0, 300)];
+    });
 }
 
 export async function alertForEvent(type: EventType, e: Logged) {
@@ -94,7 +101,10 @@ export async function alertForEvent(type: EventType, e: Logged) {
     user: e.user ?? null,
     actor: e.actor ?? null,
     ip,
-    country: e.info.country,
+    // The location is the request's, so it is only shown when the alert's address is the request's too.
+    country: ip === e.info.ip ? e.info.country : null,
+    city: ip === e.info.ip ? e.info.city : null,
+    region: ip === e.info.ip ? (e.info.region ?? null) : null,
     userAgent: e.info.userAgent,
     auditId: e.id,
     now: e.now,
@@ -105,7 +115,7 @@ export async function alertForEvent(type: EventType, e: Logged) {
   }
   const event = ALERTS[type];
   if (!event) return;
-  await securityAlert({ ...base, event, title: eventLabel(type), key: dedupeKey(type, e, ip), what: describe(type, e) });
+  await securityAlert({ ...base, event, title: eventLabel(type), key: dedupeKey(type, e, ip), what: describe(type, e), details: detailRows(e) });
 }
 
 /** New device / IP / country, and every successful admin sign-in. */

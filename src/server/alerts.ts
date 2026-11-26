@@ -2,12 +2,13 @@ import "server-only";
 import { alertRouting, type AlertRouting } from "@/lib/security";
 import { recordAndSendWith, type AlertInput } from "./alert-core";
 import { all, run } from "./db";
-import { APP_NAME, cfEnv, inBackground, isLocalHost, requestHost } from "./env";
+import { cfEnv, inBackground, isLocalHost, requestHost } from "./env";
+import { requestInfo } from "./events";
 import { getSettings } from "./settings";
 
 // Composing, deduping, recording and sending live in alert-core.ts (no Next.js imports, so the
 // Worker entry's CAPTCHA-wall alert goes through the same path).
-export { ALERT_DEDUPE_MS, composeAlert, type AlertEvent, type AlertInput, type ComposedAlert } from "./alert-core";
+export { ALERT_DEDUPE_MS, DIGEST_EVENTS, DIGEST_MS, composeAlert, type AlertEvent, type AlertInput, type ComposedAlert } from "./alert-core";
 
 export function currentRouting(host: string): AlertRouting {
   return alertRouting(cfEnv(), host);
@@ -26,13 +27,33 @@ export async function securityAlert(input: AlertInput): Promise<void> {
     host = "";
   }
   if (!host) host = new URL(cfEnv().PUBLIC_ORIGIN ?? "https://onlyjewishgirls.com").host;
-  inBackground(recordAndSend(input, host));
+  inBackground(recordAndSend(await withRequestLocation(input), host));
+}
+
+/**
+ * When the alert is about the address this request came from, add Cloudflare's approximate location
+ * (city, region, country) if the caller didn't. Never an outside lookup.
+ */
+async function withRequestLocation(input: AlertInput): Promise<AlertInput> {
+  try {
+    const info = await requestInfo();
+    if (!input.ip || input.ip !== info.ip) return input;
+    return {
+      ...input,
+      country: input.country ?? info.country,
+      city: input.city ?? info.city,
+      region: input.region ?? info.region ?? null,
+      userAgent: input.userAgent ?? info.userAgent,
+    };
+  } catch {
+    return input;
+  }
 }
 
 /** One email per (event, key) per 10 minutes (see recordAndSendWith). Returns the alert row's id. */
 export async function recordAndSend(input: AlertInput, host: string): Promise<number | null> {
   const { time_zone: timeZone } = await getSettings();
-  return recordAndSendWith({ env: cfEnv(), db: { all, run }, site: APP_NAME, timeZone, local: isLocalHost(host) }, input, host);
+  return recordAndSendWith({ env: cfEnv(), db: { all, run }, timeZone, local: isLocalHost(host) }, input, host);
 }
 
 export interface AlertRow {

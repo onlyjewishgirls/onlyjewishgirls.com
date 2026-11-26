@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { call, h, makeUser, resetHarness, settle, signInAs } from "./harness";
 
 const { recordAndSend, composeAlert, ALERT_DEDUPE_MS } = await import("@/server/alerts");
+const { mailIdentity } = await import("@/server/mail-template");
 const { autoBlock } = await import("@/server/threat");
 const { resolveSettings } = await import("@/lib/settings-schema");
 const { POST: login } = await import("@/app/api/auth/login/route");
@@ -33,9 +34,10 @@ describe("security alert emails (§6)", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].url).toBe("https://next-api.useplunk.com/v1/send");
     expect(sent[0].body).toMatchObject({
-      from: { name: "OnlyJewishGirls Security", email: "securityalerts@onlyjewishgirls.com" },
+      from: { name: "OnlyJewishGirls", email: "securityalerts@onlyjewishgirls.com" },
+      reply: "info@onlyjewishgirls.com",
       to: "soc@onlyjewishgirls.com",
-      subject: "[SECURITY] OnlyJewishGirls — Wrong password",
+      subject: "[OnlyJewishGirls] Failed sign-in attempt on the member site",
     });
     const row = h.d1.one<{ status: string; to_addr: string; provider: string }>("SELECT * FROM security_alerts")!;
     expect(row).toMatchObject({ status: "sent", to_addr: "soc@onlyjewishgirls.com", provider: "plunk" });
@@ -46,7 +48,7 @@ describe("security alert emails (§6)", () => {
     h.env.ALERTS_EMAIL_TO = "owner@example.com";
     h.env.ALERT_EMAIL_TO = "legacy@example.com";
     await recordAndSend(base, "onlyjewishgirls.com");
-    expect(sent[0].body).toMatchObject({ from: { name: "OnlyJewishGirls Security", email: "alerts@onlyjewishgirls.com" }, to: "owner@example.com" });
+    expect(sent[0].body).toMatchObject({ from: { name: "OnlyJewishGirls", email: "alerts@onlyjewishgirls.com" }, to: "owner@example.com" });
   });
 
   it("sends one per (event, key) per 10 minutes and counts the rest as +N more", async () => {
@@ -61,7 +63,8 @@ describe("security alert emails (§6)", () => {
     expect(statuses).toEqual(["sent", "throttled", "throttled", "sent"]);
     await recordAndSend({ ...base, now: t0 + ALERT_DEDUPE_MS + 1 }, "onlyjewishgirls.com");
     expect(sent).toHaveLength(3);
-    expect(String(sent[2].body.body)).toContain("+2 more alerts like this in the last 10 minutes (throttled)");
+    expect(sent[2].body.subject).toBe("[OnlyJewishGirls] Failed sign-in attempt on the member site (and 2 more like it)");
+    expect(String(sent[2].body.body)).toContain("There were also 2 more alerts like this in the last 10 minutes.");
     expect(h.d1.one<{ suppressed: number }>("SELECT suppressed FROM security_alerts ORDER BY id DESC")!.suppressed).toBe(2);
   });
 
@@ -75,7 +78,7 @@ describe("security alert emails (§6)", () => {
     // The next one after the window carries the count.
     await recordAndSend({ ...base, now: t0 + ALERT_DEDUPE_MS + 10 }, "onlyjewishgirls.com");
     expect(sent).toHaveLength(2);
-    expect(String(sent[1].body.body)).toContain("+7 more alerts like this");
+    expect(String(sent[1].body.body)).toContain("also 7 more alerts like this");
   });
 
   it("parallel failed sign-ins from one address against one account email once", async () => {
@@ -85,7 +88,7 @@ describe("security alert emails (§6)", () => {
     const rows = h.d1.rows<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'failed_signin'");
     expect(rows).toHaveLength(4);
     expect(rows.filter((r) => r.status === "sent")).toHaveLength(1);
-    expect(sent.filter((m) => String(m.body.subject).includes("Wrong password") || String(m.body.subject).includes("sign-in"))).toHaveLength(1);
+    expect(sent.filter((m) => String(m.body.subject).includes("Failed sign-in"))).toHaveLength(1);
   });
 
   it("records a failed delivery", async () => {
@@ -101,13 +104,24 @@ describe("security alert emails (§6)", () => {
 
   it("carries what/who/IP/country/UA/device/time and a link to the audit entry", () => {
     const mail = composeAlert(
-      { ...base, user: { id: 1, username: "miriam" }, ip: "203.0.113.10", country: "US", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", auditId: 42 },
-      { site: "OnlyJewishGirls", timeZone: "America/New_York", auditUrl: "https://onlyjewishgirls.com/admin#audit/42", suppressed: 0, now: Date.UTC(2026, 10, 4, 20, 0) },
+      { ...base, user: { id: 1, username: "miriam" }, ip: "203.0.113.10", country: "US", city: "Lakewood", region: "New Jersey", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)", auditId: 42 },
+      { identity: mailIdentity(), timeZone: "America/New_York", auditUrl: "https://onlyjewishgirls.com/admin#audit/42", suppressed: 0, now: Date.UTC(2026, 10, 4, 20, 0) },
     );
-    for (const s of ["What: Wrong password", "Account: miriam", "IP: 203.0.113.10", "Country: US", "User agent: Mozilla", "Device: ", "(America/New_York)", "2026-11-04T20:00:00.000Z UTC", "Audit entry: https://onlyjewishgirls.com/admin#audit/42"]) {
+    for (const s of [
+      "Wrong password — account miriam.",
+      "- Event: Wrong password",
+      "- Account: miriam",
+      "- IP address: 203.0.113.10",
+      "- Approximate location: Lakewood, New Jersey, US",
+      "- Browser (user agent): Mozilla",
+      "- Device: ",
+      "- When: Nov 4, 2026, 3:00:00 PM EST (America/New_York) · 2026-11-04 20:00:00 UTC",
+      "- Portal: OnlyJewishGirls member site (onlyjewishgirls.com)",
+      "Review it in the console: https://onlyjewishgirls.com/admin#audit/42",
+    ]) {
       expect(mail.text).toContain(s);
     }
-    expect(mail.html).toContain('<a href="https://onlyjewishgirls.com/admin#audit/42">');
+    expect(mail.html).toContain('<a href="https://onlyjewishgirls.com/admin#audit/42" style="color:#1f3fae">https://onlyjewishgirls.com/admin#audit/42</a>');
   });
 
   it("failed sign-ins email via the audit log (deduped per account + IP)", async () => {
@@ -136,12 +150,13 @@ describe("owner lockout safety (§7)", () => {
     await settle();
     const deny = h.d1.one<{ owner_session: number; sessions_killed: number }>("SELECT * FROM ip_rules WHERE kind = 'deny'")!;
     expect(deny).toMatchObject({ owner_session: 1, sessions_killed: 1 });
-    const alert = sent.find((s) => String(s.body.subject).includes("OWNER LOCKOUT"))!;
-    expect(alert.body.subject).toBe("[SECURITY] OnlyJewishGirls — OWNER LOCKOUT: Auto-blacklisted the owner's IP");
-    // Plunk gets the HTML (it makes the text part from it): the red banner plus the WARNING row.
-    expect(String(alert.body.body)).toContain("OWNER LOCKOUT — this IP belonged to the owner's live session.");
-    expect(String(alert.body.body)).toContain("This IP address belongs to the OWNER&#39;s live session.");
-    expect(String(alert.body.body)).toContain("npx wrangler d1 execute onlyjewishgirls --remote");
+    const alert = sent.find((s) => String(s.body.subject).includes("owner's IP address"))!;
+    expect(alert.body.subject).toBe("[OnlyJewishGirls] The owner's IP address was blocked automatically on the member site");
+    // Plunk gets the HTML (it makes the text part from it): the boxed notice comes before everything else.
+    const body = String(alert.body.body);
+    expect(body).toContain("This IP address (203.0.113.10) belongs to the owner&#39;s live session, so the owner has been signed out and blocked from it.");
+    expect(body).toContain("npx wrangler d1 execute onlyjewishgirls --remote");
+    expect(body.indexOf("belongs to the owner")).toBeLessThan(body.indexOf("<h2"));
     expect(h.d1.one<{ owner_lockout: number }>("SELECT owner_lockout FROM security_alerts WHERE event = 'auto_blacklist'")!.owner_lockout).toBe(1);
   });
 });

@@ -36,7 +36,7 @@ describe("sendEmail (PORTAL-STANDARD §8: Plunk only)", () => {
       {
         url: PLUNK,
         auth: "Bearer sk_x",
-        body: { from: { name: "OnlyJewishGirls", email: "no-reply@onlyjewishgirls.com" }, to: "reader@example.com", subject: "Reset", body: "<p>Link</p>" },
+        body: { from: { name: "OnlyJewishGirls", email: "no-reply@onlyjewishgirls.com" }, reply: "info@onlyjewishgirls.com", to: "reader@example.com", subject: "Reset", body: "<p>Link</p>" },
       },
     ]);
   });

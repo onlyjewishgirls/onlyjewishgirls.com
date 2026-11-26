@@ -20,11 +20,12 @@ import { normalizeEmail, normalizeName, validateEmail, validateName, validatePho
 import { accountLock, listEvents } from "../admin";
 import { profileOf } from "../admin-undo";
 import { all, first, type Param } from "../db";
-import { APP_NAME, isLocalHost } from "../env";
+import { isLocalHost } from "../env";
 import { logEvent } from "../events";
 import { matchingRules } from "../ip-rules";
 import { LOGIN_ATTEMPTS_PER_WINDOW, loginAccountKey } from "../login-rules";
-import { deliverEmail, emailConfigured, simpleHtml } from "../mailer";
+import { composeMessageEmail, requestFacts } from "../account-mail";
+import { deliverEmail, emailConfigured, siteIdentity } from "../mailer";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "../mfa-routes";
 import { sendPasswordResetEmail } from "../password-reset";
 import { hashPassword } from "../passwords";
@@ -763,7 +764,7 @@ export async function resetPassword(ctx: ConsoleCtx) {
   if (mode === "link") {
     requireAction(ctx, "send_password_reset", target);
     if (target.suspendedAt !== null) throw err(409, "conflict", "Lift the suspension first. Reset links don't work on suspended accounts.");
-    await sendPasswordResetEmail(ctx.req, target, ctx.now);
+    await sendPasswordResetEmail(ctx.req, target, ctx.now, { byAdmin: true });
     await audited(ctx, "admin.send_password_reset", target);
     return json({ emailed: true, note: `Sent a reset link to ${target.email}. It works once and expires in 30 minutes.` });
   }
@@ -883,10 +884,8 @@ export async function emailPerson(ctx: ConsoleCtx) {
   if (!subject) throw err(400, "validation", "Enter a subject.", { field: "subject" });
   if (!text) throw err(400, "validation", "Enter a message.", { field: "body" });
   const host = ctx.req.nextUrl.host;
-  const delivery = await deliverEmail(
-    { to: target.email, subject: `${subject} — ${APP_NAME}`, text, html: simpleHtml(text.split(/\n{2,}/)) },
-    { local: isLocalHost(host) },
-  );
+  const mail = composeMessageEmail(siteIdentity(), { username: target.username, subject, message: text, facts: await requestFacts(ctx.now) });
+  const delivery = await deliverEmail({ to: target.email, ...mail }, { local: isLocalHost(host) });
   await audited(ctx, "admin.send_email", target, { subject, delivered: delivery.ok, provider: delivery.provider });
   if (!delivery.ok) throw err(502, "delivery_failed", `The email to ${target.email} wasn't sent: ${delivery.error}`);
   return json({ delivery: "sent" });

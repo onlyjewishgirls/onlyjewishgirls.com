@@ -34,8 +34,9 @@ describe("PLUNK_API_KEY alone is a complete mail set-up (§8)", () => {
         url: PLUNK,
         body: expect.objectContaining({
           to: "soc@onlyjewishgirls.com",
-          from: { name: "OnlyJewishGirls Security", email: "securityalerts@onlyjewishgirls.com" },
-          subject: "[SECURITY] OnlyJewishGirls — Test alert",
+          from: { name: "OnlyJewishGirls", email: "securityalerts@onlyjewishgirls.com" },
+          reply: "info@onlyjewishgirls.com",
+          subject: "[OnlyJewishGirls] Test alert on the member site",
         }),
       },
     ]);
@@ -48,8 +49,8 @@ describe("PLUNK_API_KEY alone is a complete mail set-up (§8)", () => {
     const r = await call(forgot, "/api/auth/forgot-password", { body: { identifier: "ruthie" } });
     expect(r.data.ok).toBe(true);
     await settle();
-    const reset = sent.find((s) => String(s.body.subject).startsWith("Reset your"))!;
-    expect(reset).toMatchObject({ url: PLUNK, body: { to: "ruthie@example.com", from: { name: "OnlyJewishGirls", email: "no-reply@onlyjewishgirls.com" } } });
+    const reset = sent.find((s) => String(s.body.subject) === "[OnlyJewishGirls] Password reset requested on the member site")!;
+    expect(reset).toMatchObject({ url: PLUNK, body: { to: "ruthie@example.com", from: { name: "OnlyJewishGirls", email: "no-reply@onlyjewishgirls.com" }, reply: "info@onlyjewishgirls.com" } });
     expect(String(reset.body.body)).toContain("/reset-password?token=");
   });
 
@@ -63,7 +64,7 @@ describe("PLUNK_API_KEY alone is a complete mail set-up (§8)", () => {
     h.cookies.set("__Host-ojg_session", token);
     answer(200);
     expect((await call(sendCode, "/api/mfa/email/send", { body: {} })).data.ok).toBe(true);
-    expect(sent[0]).toMatchObject({ url: PLUNK, body: { to: "codey@example.com", subject: expect.stringMatching(/^\d{6} is your OnlyJewishGirls sign-in code$/) } });
+    expect(sent[0]).toMatchObject({ url: PLUNK, body: { to: "codey@example.com", subject: "[OnlyJewishGirls] Sign-in code requested on the member site" } });
   });
 
   it("a RESEND_API_KEY that is still set is never used: alerts and reset links go to Plunk only", async () => {

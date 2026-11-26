@@ -356,10 +356,10 @@ describe("CAPTCHA wall: configuration", () => {
     expect(appCalls).toEqual(["GET /", "GET /.env", "GET /robots.txt"]);
     await settle();
     const alerts = h.d1.rows<{ event: string; status: string; subject: string }>("SELECT * FROM security_alerts WHERE event = 'captcha_off'");
-    expect(alerts).toEqual([expect.objectContaining({ status: "sent", subject: "[SECURITY] OnlyJewishGirls — The CAPTCHA wall is OFF" })]);
-    const offMail = mail.filter((m) => String(m.body.subject).includes("CAPTCHA wall is OFF"));
+    expect(alerts).toEqual([expect.objectContaining({ status: "sent", subject: "[OnlyJewishGirls] CAPTCHA wall turned off on the member site" })]);
+    const offMail = mail.filter((m) => String(m.body.subject).includes("CAPTCHA wall turned off"));
     expect(offMail).toHaveLength(1);
-    expect(offMail[0].body).toMatchObject({ from: { name: "OnlyJewishGirls Security", email: "securityalerts@onlyjewishgirls.com" }, to: "soc@onlyjewishgirls.com" });
+    expect(offMail[0].body).toMatchObject({ from: { name: "OnlyJewishGirls", email: "securityalerts@onlyjewishgirls.com" }, reply: "info@onlyjewishgirls.com", to: "soc@onlyjewishgirls.com" });
     // Another isolate later the same day: no second email.
     captcha = createCaptcha();
     await send("/");

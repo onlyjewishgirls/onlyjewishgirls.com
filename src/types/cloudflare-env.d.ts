@@ -5,7 +5,7 @@ interface CloudflareEnv {
   PLUNK_API_KEY?: string;
   /** Optional override for Plunk's send endpoint (default https://next-api.useplunk.com/v1/send). */
   PLUNK_API_URL?: string;
-  /** Sender for account mail; defaults to "OnlyJewishGirls <no-reply@onlyjewishgirls.com>". */
+  /** Sender address for account mail; defaults to no-reply@onlyjewishgirls.com. The name shown is always MAIL_BUSINESS_NAME. */
   EMAIL_FROM?: string;
   /** Base URL for links in emails, e.g. "https://onlyjewishgirls.com". Defaults to the request's origin. */
   PUBLIC_ORIGIN?: string;
