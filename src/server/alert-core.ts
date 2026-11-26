@@ -98,7 +98,8 @@ export interface AlertContext {
  *
  * Anonymous internet traffic is recorded (security_alerts status `suppressed`, the audit log, the deny
  * list) and shown in the console, but not emailed: scanner/decoy hits, hostile visitors, country-rule
- * refusals, failed sign-ins for accounts that don't exist, refused admin requests with no account, and
+ * refusals, failed sign-ins for accounts that don't exist, refused admin requests (with or without an
+ * account: a member opening /admin is normal use), and
  * auto-blocks of an address with no successful sign-in in the last 24 hours that wasn't allowlisted or
  * the owner's. Everything else is emailed, with the usual 10-minute dedupe. Pure; exported for tests.
  */
@@ -107,9 +108,12 @@ export function shouldEmail(input: AlertInput): boolean {
     case "decoy_hit":
     case "hostile_visitor":
     case "country_blocked":
+    // A refused admin request isn't on the standard's email list: with no account it is anonymous
+    // traffic, and a signed-in member opening /admin from a bookmark is normal use (owner, 2026-11-26).
+    // Both are recorded; an address that is then auto-blocked after signing in is emailed.
+    case "admin_access_denied":
       return false;
     case "failed_signin":
-    case "admin_access_denied":
       return Boolean(input.user);
     case "auto_blacklist":
       return Boolean(input.ownerLockout || input.wasAllowlisted || input.signedIn);

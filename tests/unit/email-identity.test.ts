@@ -383,7 +383,7 @@ describe("anonymous traffic is recorded without an email; a flagged signed-in ad
     expect(h.d1.one<{ status: string }>("SELECT status FROM security_alerts WHERE event = 'failed_signin'")?.status).toBe("suppressed");
     expect(shouldEmail({ event: "country_blocked", title: "x", key: "country:DE", what: "x" })).toBe(false);
     expect(shouldEmail({ event: "admin_access_denied", title: "x", key: "x", what: "x" })).toBe(false);
-    expect(shouldEmail({ event: "admin_access_denied", title: "x", key: "x", what: "x", user: { id: 1, username: "m" } })).toBe(true);
+    expect(shouldEmail({ event: "admin_access_denied", title: "x", key: "x", what: "x", user: { id: 1, username: "m" } })).toBe(false);
     expect(shouldEmail({ event: "failed_signin", title: "x", key: "x", what: "x", user: { id: 1, username: "m" } })).toBe(true);
   });
 
@@ -407,9 +407,8 @@ describe("anonymous traffic is recorded without an email; a flagged signed-in ad
     await settle();
     const events = h.d1.rows<{ event: string; to_addr: string }>("SELECT event, to_addr FROM security_alerts");
     expect(new Set(events.map((e) => e.event))).toEqual(new Set(["admin_access_denied", "auto_blacklist", "decoy_hit", "hostile_visitor"]));
-    // The member's refused console requests are emailed (an account is involved); the anonymous scanner isn't.
+    // Recorded with ALERTS_EMAIL_TO as the address; none of it is emailed, and nothing ever goes to a member.
     expect(events.every((e) => e.to_addr === SOC)).toBe(true);
-    expect(sent.length).toBeGreaterThan(0);
     expect(sent.every((m) => m.to === SOC)).toBe(true);
     expect(JSON.stringify(sent)).not.toContain(`${member.username}@example.com`);
     expect(JSON.stringify(sent)).not.toContain(`${admin.username}@example.com`);

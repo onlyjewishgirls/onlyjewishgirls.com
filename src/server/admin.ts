@@ -83,14 +83,30 @@ export const FORMER_ADMIN_GRACE_MS = DAY;
 
 /**
  * §6/§7: a refused admin request is audited, alerted and counted as a strike against the address.
- * Except for an account that was an admin until an administrator changed its role in the last 24 hours:
- * its open console tab or bookmarked admin page keeps asking, which is normal use, not probing. The
- * refusal is still audited (and alerted); it just isn't a strike.
+ *
+ * From a signed-in account it counts at most once per account per auto-block window (15 min by default):
+ * a member opening /admin from a bookmark, reloading or going back is normal use, not probing, so it can
+ * never add up to a block on its own (owner, 2026-11-26). An account that was an admin until its role was
+ * changed in the last 24 hours doesn't count at all (its open console keeps asking). Requests with no
+ * account keep the full rule (3 in the window block). Every refusal is still audited.
  */
 export async function adminDenied(user: { id: number; username: string } | null, where: string, ip?: string | null) {
   const formerAdmin = user ? await wasRecentlyAdmin(user.id) : false;
   await logEvent("security.admin_denied", { user, detail: { where, ...(formerAdmin ? { former_admin: true } : {}) } });
-  if (!formerAdmin) await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
+  if (formerAdmin) return;
+  if (user && (await countedRecently(user.id))) return;
+  await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
+}
+
+/** Whether this account's refused admin request already counted as a strike in the current window. */
+async function countedRecently(userId: number, now = Date.now()): Promise<boolean> {
+  const { auto_block_window_minutes: minutes } = await getSettings();
+  const row = await first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM ip_strikes WHERE kind = 'admin_denied' AND subject = ? AND at > ?",
+    `u${userId}`,
+    now - minutes * 60_000,
+  );
+  return (row?.n ?? 0) > 0;
 }
 
 async function wasRecentlyAdmin(userId: number, now = Date.now()): Promise<boolean> {

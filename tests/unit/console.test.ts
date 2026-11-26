@@ -30,15 +30,17 @@ describe("console API: transport and auth", () => {
     expect((await c("GET", "bootstrap")).data).toMatchObject({ ok: false, code: "unauthenticated" });
   });
 
-  it("non-admins get a 404 and it counts as an admin-denied strike", async () => {
+  it("non-admins get a 404; it counts as one admin-denied strike per account per window, and every refusal is audited", async () => {
     await signInAs(member.id);
     const r = await c("GET", "bootstrap");
     expect(r.status).toBe(404);
     expect(h.d1.one<{ kind: string }>("SELECT kind FROM ip_strikes")?.kind).toBe("admin_denied");
     await c("GET", "people");
     await c("GET", "people");
-    // 3 in 15 minutes: auto-blacklisted.
-    expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("admin_denied");
+    // A signed-in account counts once per 15 minutes (§7: a member reloading /admin isn't probing).
+    expect(h.d1.rows("SELECT * FROM ip_strikes WHERE kind = 'admin_denied'")).toHaveLength(1);
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'security.admin_denied'")!.n).toBe(3);
   });
 
   it("rejects writes without X-Requested-With or from another origin (csrf)", async () => {

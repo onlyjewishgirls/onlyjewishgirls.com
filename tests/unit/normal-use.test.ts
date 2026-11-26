@@ -24,6 +24,7 @@ const { POST: adminAction } = await import("@/app/api/admin/action/route");
 const { POST: adminCreate } = await import("@/app/api/admin/create/route");
 const { POST: adminExport } = await import("@/app/api/admin/export/route");
 const { GET: adminConsolePage } = await import("@/app/admin/route");
+const { adminDenied } = await import("@/server/admin");
 const { isDecoyPath, findInjection } = await import("@/lib/security");
 const { threatScore } = await import("@/lib/security");
 
@@ -150,6 +151,14 @@ describe("a normal member session is never flagged (§7)", () => {
     await call(restore, "/api/streak/restore", { body: {} });
     for (let i = 0; i < 5; i++) await call(passkeyOptions, "/api/auth/passkey/options", { body: {} });
     await call(forgot, "/api/auth/forgot-password", { body: { identifier: "rivka" } });
+    // A bookmark, a reload, the back button: the member opens /admin 5 times. Refused (404) and audited,
+    // one strike at most, never a block (owner, 2026-11-26).
+    for (let i = 0; i < 5; i++) expect((await call(adminConsolePage as never, "/admin")).status).toBe(404);
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'security.admin_denied'")!.n).toBe(5);
+    expect(h.d1.rows("SELECT * FROM ip_strikes WHERE kind = 'admin_denied'")).toHaveLength(1);
+    h.d1.exec("DELETE FROM ip_strikes WHERE kind = 'admin_denied'");
+    h.d1.exec("DELETE FROM events WHERE type = 'security.admin_denied'");
+    h.d1.exec("DELETE FROM security_alerts WHERE event = 'admin_access_denied'");
     await settle();
 
     expectNothingFlagged();
@@ -292,12 +301,30 @@ describe("normal admin and owner sessions are never flagged (§7)", () => {
 });
 
 describe("real attacks are still caught (§7)", () => {
-  it("a signed-in session hammering the admin API without permission is still blocked", async () => {
+  it("a member opens /admin 5 times: refused and audited each time, not blocked", async () => {
+    const member = await makeUser({ username: "bookmark" });
+    h.ip = "198.51.100.52";
+    await signInAs(member.id);
+    for (let i = 0; i < 5; i++) expect((await call(adminConsolePage as never, "/admin")).status).toBe(404);
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+    expect(h.d1.one<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE type = 'security.admin_denied'")!.n).toBe(5);
+  });
+
+  it("3 admin requests with no account are still blocked", async () => {
+    h.ip = "198.51.100.53";
+    for (let i = 0; i < 3; i++) await adminDenied(null, "admin API", h.ip);
+    expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("admin_denied");
+  });
+
+  it("a signed-in session hammering the admin API and then a scanner path is still blocked", async () => {
     const member = await makeUser({ username: "nosy" });
     h.ip = "198.51.100.50";
     await signInAs(member.id);
-    for (let i = 0; i < 3; i++) await consoleCall("GET", "people");
-    expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("admin_denied");
+    for (let i = 0; i < 10; i++) await consoleCall("GET", "people");
+    expect(h.d1.rows("SELECT * FROM ip_rules WHERE kind = 'deny'")).toEqual([]);
+    const { GET: decoy } = await import("@/app/api/decoy/route");
+    await call(decoy, "/api/decoy?p=.env");
+    expect(h.d1.one<{ trigger_kind: string }>("SELECT trigger_kind FROM ip_rules WHERE kind = 'deny'")?.trigger_kind).toBe("decoy");
   });
 
   it("an injection in the sign-in identifier or an API URL is still blocked", async () => {
