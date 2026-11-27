@@ -51,6 +51,8 @@ export const ROUTES: Route[] = [
   { method: "PATCH", pattern: "deny/:id", handler: sections.patchDeny, write: true },
   { method: "POST", pattern: "deny/:id/unblock", handler: sections.unblock, write: true },
 
+  { method: "GET", pattern: "country-rule", handler: sections.getCountryRuleRoute },
+  { method: "PUT", pattern: "country-rule", handler: sections.putCountryRule, write: true },
   { method: "GET", pattern: "sessions", handler: sections.sessions },
   { method: "DELETE", pattern: "sessions/:id", handler: sections.deleteSessionRoute, write: true },
 
@@ -61,4 +63,6 @@ export const ROUTES: Route[] = [
   { method: "GET", pattern: "audit/:id", handler: records.getAudit },
   { method: "POST", pattern: "audit/:id/revert", handler: records.revertAudit, write: true },
   { method: "GET", pattern: "alerts", handler: records.listAlertsRoute },
+  // Not `write`: exporting only reads, so it needs no step-up; CSRF and sign-in still apply.
+  { method: "POST", pattern: "exports", handler: records.recordExport },
 ];

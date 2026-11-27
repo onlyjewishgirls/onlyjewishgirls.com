@@ -165,7 +165,9 @@ export const DECOY_PATH_PATTERNS: RegExp[] = [
   /^\/server-status/i,
   /^\/vendor\/phpunit/i,
   /^\/config\.(php|json|yml|yaml)$/i,
-  /^\/[^/]*\.(php|asp|aspx|jsp|cgi)$/i,
+  // Any *.php/*.asp/… path, at any depth (/blog/wp-login.php, /foo/xmlrpc.php): this site is a Next.js app
+  // and serves none, so no page of it can link to one (next.config.ts rewrites the same set here).
+  /\.(php|asp|aspx|jsp|cgi)$/i,
   /^\/administrator(\/|$)/i,
   /^\/actuator(\/|$)/i,
 ];
@@ -217,27 +219,48 @@ export interface StrikeCounts {
   failed_password: number;
   failed_mfa: number;
   accounts: number;
+  /** Distinct names tried that match no account (username guessing). Optional: only the blocker reads it. */
+  unknown_names?: number;
   admin_denied: number;
   rate_limit: number;
   decoy: number;
   injection: number;
 }
 
+/**
+ * Failed sign-ins for this many distinct names that match no account, from one address in the window,
+ * block it (PORTAL-STANDARD §7: that is username guessing, not colleagues mistyping).
+ */
+export const UNKNOWN_NAMES_THRESHOLD = 3;
+
+/**
+ * Most points that mistakes a real person can make add up to: wrong passwords, wrong two-step codes,
+ * several accounts tried and rate-limit trips. Each of those has its own threshold (§7); together they
+ * stay below the hostile band (80), so typos under every threshold never get an address blocked
+ * through the score. Decoys, injections and refused admin requests still add on top.
+ */
+export const TYPO_POINTS_CAP = 60;
+
 /** Points per strike kind; capped at 100. Decoys and injections alone reach the hostile band. */
 export function threatScore(c: Partial<StrikeCounts>): { score: number; reasons: string[] } {
-  const parts: [number, string][] = [];
-  const add = (n: number | undefined, weight: number, label: (n: number) => string) => {
-    if (n && n > 0) parts.push([n * weight, label(n)]);
+  const parts: [number, string, boolean][] = [];
+  const add = (n: number | undefined, weight: number, label: (n: number) => string, typo = false) => {
+    if (n && n > 0) parts.push([n * weight, label(n), typo]);
   };
   add(c.decoy, 80, (n) => `${n} request${n === 1 ? "" : "s"} to scanner/decoy paths`);
   add(c.injection, 80, (n) => `${n} injection attempt${n === 1 ? "" : "s"}`);
-  add(c.failed_password, 10, (n) => `${n} wrong password${n === 1 ? "" : "s"}`);
-  add(c.failed_mfa, 10, (n) => `${n} wrong two-step code${n === 1 ? "" : "s"}`);
-  add(c.accounts && c.accounts > 1 ? c.accounts : 0, 15, (n) => `failed sign-ins on ${n} accounts`);
+  add(c.failed_password, 10, (n) => `${n} wrong password${n === 1 ? "" : "s"}`, true);
+  add(c.failed_mfa, 10, (n) => `${n} wrong two-step code${n === 1 ? "" : "s"}`, true);
+  add(c.accounts && c.accounts > 1 ? c.accounts : 0, 15, (n) => `failed sign-ins on ${n} accounts`, true);
+  add(c.unknown_names && c.unknown_names > 1 ? c.unknown_names : 0, 15, (n) => `failed sign-ins for ${n} usernames that don't exist`, true);
   add(c.admin_denied, 20, (n) => `${n} refused admin request${n === 1 ? "" : "s"}`);
-  add(c.rate_limit, 15, (n) => `${n} rate-limit trip${n === 1 ? "" : "s"}`);
+  add(c.rate_limit, 15, (n) => `${n} rate-limit trip${n === 1 ? "" : "s"}`, true);
+  // Scale the mistake kinds down together so they never add up to more than the cap.
+  const typoTotal = parts.reduce((s, [p, , typo]) => s + (typo ? p : 0), 0);
+  const scale = typoTotal > TYPO_POINTS_CAP ? TYPO_POINTS_CAP / typoTotal : 1;
+  for (const part of parts) if (part[2]) part[0] *= scale;
   parts.sort((a, b) => b[0] - a[0]);
-  return { score: Math.min(100, parts.reduce((s, [p]) => s + p, 0)), reasons: parts.map(([, r]) => r) };
+  return { score: Math.min(100, Math.round(parts.reduce((s, [p]) => s + p, 0))), reasons: parts.map(([, r]) => r) };
 }
 
 /** "4 min 12 s", "1 h 5 min", "35 s". */

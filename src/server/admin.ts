@@ -1,10 +1,11 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
+import { cache } from "react";
 import { EVENT_GROUPS, type EventGroup } from "@/lib/admin/events";
 import { isAdminRole } from "@/lib/admin/permissions";
-import { streakCalendar } from "@/lib/streak/calendar";
 import { bucketByDay, type DailyCount } from "@/lib/admin/days";
 import { getStreakStatus, type StreakStatus } from "@/lib/streak/engine";
+import type { Settings } from "@/lib/settings-schema";
 import { all, first, type Param } from "./db";
 import { logEvent } from "./events";
 import { LOGIN_ATTEMPTS_PER_WINDOW } from "./login-rules";
@@ -12,7 +13,8 @@ import { recordStrike } from "./threat";
 import { getPageAuth, type PageAuth } from "./guards";
 import { jsonError } from "./http";
 import { mfaState, nextStep } from "./mfa";
-import { storedPlace } from "./location";
+import { getSettings } from "./settings";
+import { storedCalendar } from "./streak";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "./mfa-routes";
 import { isRateLimited } from "./rate-limit";
 import { getAuth, listSessions, type AuthContext, type Session } from "./session";
@@ -26,10 +28,11 @@ const DAY = 24 * HOUR;
 /** Full sessions end after 3 days without activity (see session.ts). */
 const IDLE_MS = 3 * DAY;
 /**
- * No streak survives this long without a check-in: 30 hours, plus at most a
- * 3-day Yom Tov and 12 hours after it. Older streak counts are certainly over.
+ * No streak survives this long without a check-in: the rest of today, up to six
+ * grace days (a weekend and a 2-day Yom Tov), then the whole next required day.
+ * Older streak counts are certainly over.
  */
-const STREAK_CERTAINLY_OVER_MS = 6 * DAY;
+const STREAK_CERTAINLY_OVER_MS = 9 * DAY;
 
 // ---- Guards ----
 
@@ -37,7 +40,13 @@ const STREAK_CERTAINLY_OVER_MS = 6 * DAY;
  * Admin pages. Anyone who isn't a fully signed-in admin with complete
  * two-step sign-in gets a plain 404, so the panel's existence isn't advertised.
  */
-export async function requireAdminPage(): Promise<PageAuth & { now: number }> {
+export const requireAdminPage = cache(requireAdminPageOnce);
+
+/**
+ * The admin layout and the page inside it both call requireAdminPage; React's per-request cache makes
+ * that one check, so a refused member counts as one refused request, not two (§7).
+ */
+async function requireAdminPageOnce(): Promise<PageAuth & { now: number }> {
   const auth = await getPageAuth();
   if (!auth) redirect("/login");
   if (auth.next !== "/home") redirect(auth.next);
@@ -69,10 +78,45 @@ export async function requireAdminApi(): Promise<AdminApiGuard> {
   return { ok: true, ctx };
 }
 
-/** §6/§7: a refused admin request is audited, alerted and counted as a strike against the address. */
+/** How long after losing the admin role an account's refused admin requests aren't counted as strikes. */
+export const FORMER_ADMIN_GRACE_MS = DAY;
+
+/**
+ * §6/§7: a refused admin request is audited, alerted and counted as a strike against the address.
+ *
+ * From a signed-in account it counts at most once per account per auto-block window (15 min by default):
+ * a member opening /admin from a bookmark, reloading or going back is normal use, not probing, so it can
+ * never add up to a block on its own (owner, 2026-11-26). An account that was an admin until its role was
+ * changed in the last 24 hours doesn't count at all (its open console keeps asking). Requests with no
+ * account keep the full rule (3 in the window block). Every refusal is still audited.
+ */
 export async function adminDenied(user: { id: number; username: string } | null, where: string, ip?: string | null) {
-  await logEvent("security.admin_denied", { user, detail: { where } });
+  const formerAdmin = user ? await wasRecentlyAdmin(user.id) : false;
+  await logEvent("security.admin_denied", { user, detail: { where, ...(formerAdmin ? { former_admin: true } : {}) } });
+  if (formerAdmin) return;
+  if (user && (await countedRecently(user.id))) return;
   await recordStrike("admin_denied", { ip, subject: user ? `u${user.id}` : where });
+}
+
+/** Whether this account's refused admin request already counted as a strike in the current window. */
+async function countedRecently(userId: number, now = Date.now()): Promise<boolean> {
+  const { auto_block_window_minutes: minutes } = await getSettings();
+  const row = await first<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM ip_strikes WHERE kind = 'admin_denied' AND subject = ? AND at > ?",
+    `u${userId}`,
+    now - minutes * 60_000,
+  );
+  return (row?.n ?? 0) > 0;
+}
+
+async function wasRecentlyAdmin(userId: number, now = Date.now()): Promise<boolean> {
+  const row = await first<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM events
+     WHERE user_id = ? AND type = 'admin.set_role' AND at > ? AND json_extract(detail, '$.from') IN ('admin', 'owner')`,
+    userId,
+    now - FORMER_ADMIN_GRACE_MS,
+  );
+  return (row?.n ?? 0) > 0;
 }
 
 // ---- Shared helpers ----
@@ -102,8 +146,8 @@ export async function accountLock(userId: number, now = Date.now()): Promise<Acc
   };
 }
 
-export function streakStatusFor(user: User, now = Date.now()): StreakStatus {
-  return getStreakStatus(user.streak, now, streakCalendar(storedPlace(user)));
+export function streakStatusFor(user: User, settings: Settings, now = Date.now()): StreakStatus {
+  return getStreakStatus(user.streak, now, storedCalendar(user, settings));
 }
 
 // ---- Dashboard ----
@@ -130,6 +174,7 @@ export interface DashboardStats {
 
 export async function dashboardStats(timeZone: string, now = Date.now()): Promise<DashboardStats> {
   const since = (ms: number) => now - ms;
+  const settings = await getSettings();
   const [counts, signups, actives, topRows, recentEvents] = await Promise.all([
     first<{
       total: number;
@@ -193,7 +238,7 @@ export async function dashboardStats(timeZone: string, now = Date.now()): Promis
 
   const topStreaks = topRows
     .map((row) => toUser(row)!)
-    .map((user) => ({ user, status: streakStatusFor(user, now) }))
+    .map((user) => ({ user, status: streakStatusFor(user, settings, now) }))
     .filter((s) => s.status.alive)
     .slice(0, 5);
 
@@ -380,6 +425,7 @@ export interface UserDetail {
 export async function userDetail(userId: number, now = Date.now()): Promise<UserDetail | null> {
   const user = await findUserById(userId);
   if (!user) return null;
+  const settings = await getSettings();
   const [passkeys, codes, sessions, lock, failed, events] = await Promise.all([
     listPasskeys(userId),
     first<{ n: number }>("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ? AND used_at IS NULL", userId),
@@ -398,7 +444,7 @@ export async function userDetail(userId: number, now = Date.now()): Promise<User
     recoveryCodesLeft: codes?.n ?? 0,
     sessions: sessions.filter((s) => s.stage === "password" || now - s.lastSeenAt <= IDLE_MS),
     lock,
-    streak: streakStatusFor(user, now),
+    streak: streakStatusFor(user, settings, now),
     failedSignIns24h: failed?.n ?? 0,
     events: events.events,
   };

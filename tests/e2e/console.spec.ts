@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+import { E2E_ORIGIN } from "../../playwright.config";
 import { addVirtualAuthenticator, blockPasskeyAutofill, collectConsoleErrors, completeMfaSetup, query, screenshot, sql } from "./helpers";
 
 const owner = {
@@ -68,6 +70,63 @@ test("the admin console is the Console kit, with this site's features", async ({
     await expect
       .poll(() => query<{ status: string }>(`SELECT status FROM security_alerts WHERE event = 'streak_set' AND user_id = ${ownerId}`).map((r) => r.status))
       .toEqual(["failed"]);
+  });
+
+  await test.step("the record shows the person's streak time zone, and the owner can change it (audited)", async () => {
+    await page.goto(`/admin#people/${ownerId}`);
+    await page.getByRole("tab", { name: "Profile" }).click();
+    const zone = page.getByLabel("Time zone (streak days)");
+    await expect(zone).toHaveValue("America/New_York");
+    await zone.selectOption("Asia/Jerusalem");
+    await page.getByRole("button", { name: "Save details" }).click();
+    await expect(page.getByText("Saved 1 change.").first()).toBeVisible();
+    expect(query<{ time_zone: string }>(`SELECT time_zone FROM users WHERE id = ${ownerId}`)[0].time_zone).toBe("Asia/Jerusalem");
+    const ev = query<{ detail: string }>("SELECT detail FROM events WHERE type = 'admin.set_time_zone'");
+    expect(ev.map((e) => JSON.parse(e.detail))).toEqual([{ from: "America/New_York", to: "Asia/Jerusalem" }]);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await screenshot(page, "console-5-time-zone");
+    // Put it back for the steps that follow.
+    sql(`UPDATE users SET time_zone = 'America/New_York' WHERE id = ${ownerId}`);
+  });
+
+  await test.step("the country rule is the Countries part of the IP allowlist page (§9)", async () => {
+    await page.goto("/admin#ips");
+    await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();
+    await expect(page.getByText(/No rule|no rule|off/i).first()).toBeVisible();
+    const res = await page.request.put("/api/console/country-rule", {
+      headers: { "X-Requested-With": "console", Origin: E2E_ORIGIN },
+      data: { mode: "allow", countries: ["US", "CA", "IL"] },
+    });
+    // wrangler dev's local request has a country; whichever it is, the answer is either saved or an exact self_lockout.
+    const body = await res.json();
+    expect(body.ok === true || body.code === "self_lockout").toBe(true);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/admin#ips");
+    await expect(page.getByRole("heading", { name: "Countries", exact: true })).toBeVisible();
+    await screenshot(page, "console-4-countries");
+    // Leave no rule behind for later steps.
+    await page.request.put("/api/console/country-rule", {
+      headers: { "X-Requested-With": "console", Origin: E2E_ORIGIN },
+      data: { mode: "off", countries: [] },
+    });
+  });
+
+  await test.step("every section exports TXT, JSON, CSV, DOCX, PDF and HTML, and each export is audited (§11)", async () => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/admin#people");
+    const button = page.getByRole("button", { name: "Export", exact: true }).first();
+    await expect(button).toBeVisible();
+    await button.click();
+    const items = page.getByRole("menuitem");
+    await expect(items).toHaveText([/^Text/, /^JSON/, /^CSV/, /^Word/, /^PDF/, /^HTML/]);
+    const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("menuitem", { name: /CSV/ }).click()]);
+    expect(download.suggestedFilename()).toMatch(/^onlyjewishgirls-people-\d{4}-\d{2}-\d{2}\.csv$/);
+    const csv = readFileSync((await download.path())!, "utf8");
+    expect(csv).toContain(owner.username);
+    await expect
+      .poll(() => query<{ detail: string }>("SELECT detail FROM events WHERE type = 'export'").map((r) => JSON.parse(r.detail)))
+      .toContainEqual(expect.objectContaining({ section: "people", title: "People", format: "csv" }));
+    expect(query("SELECT * FROM security_alerts WHERE event LIKE '%export%'")).toEqual([]);
   });
 
   await test.step("phone width: the sidebar becomes a drawer and nothing scrolls sideways", async () => {

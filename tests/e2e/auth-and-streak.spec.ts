@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, test } from "@playwright/test";
+import { E2E_ORIGIN } from "../../playwright.config";
 import { addVirtualAuthenticator, blockPasskeyAutofill, query, screenshot, setPasskeyTouch, signIn, signOut, sql, totp } from "./helpers";
 
 const user = {
@@ -127,11 +128,23 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page.getByTestId("streak-banner")).toContainText("Your streak has started");
   });
 
-  await test.step("sign in with a passkey alone (usernameless)", async () => {
+  await test.step("Home explains the streak: required days, grace days, the person's own time zone", async () => {
+    const rules = page.getByTestId("streak-rules");
+    await expect(rules).toContainText("Monday to Thursday");
+    await expect(rules).toContainText("end of the next required day in your time zone (America/New York)");
+    await expect(rules).toContainText("Friday, Shabbat, Sunday and Yom Tov are grace days.");
+    await expect(page.getByTestId("streak-card")).toContainText(/Keep it going: sign in by the end of|Check in again within/);
+  });
+
+  const zone = () => query<{ time_zone: string }>(`SELECT time_zone FROM users WHERE username = '${user.username}'`)[0].time_zone;
+
+  await test.step("sign in with a passkey alone (usernameless), which records the browser's time zone", async () => {
     await signOut(page);
+    sql(`UPDATE users SET time_zone = 'UTC' WHERE username = '${user.username}'`);
     await page.goto("/login");
     await page.getByRole("button", { name: "Sign in with a passkey" }).click();
     await expect(page).toHaveURL("/home");
+    expect(zone()).toBe("America/New_York");
   });
 
   await test.step("sign in with password + authenticator code; methods listed passkey, app, recovery", async () => {
@@ -147,9 +160,11 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page.getByText(/^That code is incorrect\. 4 tries left on this sign-in\./)).toBeVisible();
     // The setup code can't be replayed; the next one works.
+    sql(`UPDATE users SET time_zone = 'UTC' WHERE username = '${user.username}'`);
     await page.getByLabel(/6-digit code/).fill(totp(secret, 1));
     await page.getByRole("button", { name: "Verify" }).click();
     await expect(page).toHaveURL("/home");
+    expect(zone()).toBe("America/New_York"); // the authenticator step records it too
   });
 
   await test.step("sign in with password + recovery code, which then stops working", async () => {
@@ -172,7 +187,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
     await expect(page).toHaveURL("/home");
   });
 
-  await test.step("checking in on a new day within 30 hours extends the streak", async () => {
+  await test.step("checking in on the next day extends the streak", async () => {
     const yesterday = new Date(Date.now() - 86_400_000).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
     sql(
       `UPDATE users SET streak_count = 5, streak_longest = 5, streak_last_activity_at = ${Date.now() - 20 * 3_600_000},
@@ -184,7 +199,8 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
   });
 
   await test.step("missing the deadline starts over", async () => {
-    // 200 hours is past even a 3-day Yom Tov's leeway (at most about 30 + 75 + 12 hours).
+    // 200 hours is past any deadline: at most six grace days (a weekend and a 2-day Yom Tov) and the
+    // whole next required day, under 8 days from the start of the day of the last check-in.
     sql(
       `UPDATE users SET streak_last_activity_at = ${Date.now() - 200 * 3_600_000},
        streak_last_counted_date = '2000-01-01' WHERE username = '${user.username}'`,
@@ -264,7 +280,7 @@ test("register, set up passkey + authenticator app, sign in every way, keep a st
 test("usernames and emails must be unique", async ({ request }) => {
   const register = (data: Record<string, unknown>) =>
     request.post("/api/auth/register", {
-      headers: { Origin: "http://localhost:3100" },
+      headers: { Origin: E2E_ORIGIN },
       data: {
         firstName: "Tova",
         middleName: "",
@@ -287,7 +303,7 @@ test("usernames and emails must be unique", async ({ request }) => {
 });
 
 test("forgot password says exactly what happened (no enumeration policy, §2)", async ({ request }) => {
-  const headers = { Origin: "http://localhost:3100" };
+  const headers = { Origin: E2E_ORIGIN };
   const password = "Gv6!Mz#Rt2Kw&Jp8";
   await request.post("/api/auth/register", {
     headers,

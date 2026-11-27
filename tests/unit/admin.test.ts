@@ -28,8 +28,8 @@ const SELF_LOCKOUT: AdminAction[] = [
   "force_change",
   "toggle_email_otp",
 ];
-/** PORTAL-STANDARD §4: owner-or-streaks.manage, never an admin on themselves. */
-const STREAK: AdminAction[] = ["set_streak", "grant_restores"];
+/** PORTAL-STANDARD §4: owner-or-streaks.manage, never an admin on themselves (a time zone decides streak days). */
+const STREAK: AdminAction[] = ["set_streak", "grant_restores", "set_time_zone"];
 const OWNER_ONLY: AdminAction[] = ["set_role", "set_permissions"];
 
 describe("admin permissions", () => {

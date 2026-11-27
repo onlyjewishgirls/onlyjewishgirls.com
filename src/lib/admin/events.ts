@@ -10,6 +10,7 @@ export const EVENT_LABELS = {
   "signin.locked": "Blocked: account is locked by an administrator",
   "signin.ip_blocked": "Blocked: IP address is on the deny list",
   "signin.ip_not_allowed": "Blocked: IP address is not on the allowlist",
+  "signin.country_blocked": "Blocked: country not allowed (country rule)",
   "signin.new_device": "Signed in from a new device, IP or country",
   "signin.complete": "Signed in",
   "signin.mfa_failed": "Failed two-step verification",
@@ -42,6 +43,7 @@ export const EVENT_LABELS = {
   "admin.edit_profile": "Edited the profile",
   "admin.set_streak": "Changed the streak",
   "admin.set_note": "Updated the admin note",
+  "admin.set_time_zone": "Changed the time zone their streak days follow",
   "admin.set_temp_password": "Set a temporary password",
   "admin.create_account": "Created the account",
   "admin.revert": "Undid an admin change",
@@ -62,6 +64,8 @@ export const EVENT_LABELS = {
   "admin.ip_deny_add": "Blocked an IP address",
   "admin.ip_deny_update": "Edited a deny-list entry",
   "admin.ip_unblock": "Unblocked an IP address",
+  "admin.country_rule": "Changed the country rule",
+  export: "Exported a section",
   "security.admin_denied": "Refused: admin area without permission",
   "security.auto_blocked": "IP auto-blacklisted",
   "security.auto_block_skipped": "Would have auto-blacklisted (local address)",
@@ -74,6 +78,13 @@ export type EventType = keyof typeof EVENT_LABELS;
 
 export function eventLabel(type: string): string {
   return (EVENT_LABELS as Record<string, string>)[type] ?? type;
+}
+
+/** "Exported People as PDF (17 rows)": the audit line for an export (PORTAL-STANDARD §11). */
+export function exportSentence(d: Record<string, unknown>): string {
+  const what = typeof d.title === "string" && d.title ? d.title : String(d.section ?? "a section");
+  const rows = typeof d.rows === "number" ? d.rows : 0;
+  return `Exported ${what} as ${String(d.format ?? "").toUpperCase()} (${rows} row${rows === 1 ? "" : "s"})`;
 }
 
 /** Filters on the activity page. */
@@ -107,6 +118,7 @@ export function isWarningEvent(type: string): boolean {
     type.startsWith("security.") ||
     type === "signin.ip_blocked" ||
     type === "signin.ip_not_allowed" ||
+    type === "signin.country_blocked" ||
     type === "signin.locked"
   );
 }

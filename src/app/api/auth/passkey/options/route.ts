@@ -8,7 +8,7 @@ import { discoverableOptions } from "@/server/webauthn";
 export const POST = api(async (req) => {
   const ip = clientIp(req);
   const limit = await rateLimit(`passkey-login:ip:${ip}`, 30, 15 * 60_000);
-  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, ip, "passkey sign-in attempts");
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, ip, "passkey sign-in attempts", limit.firstRefusal);
   const now = Date.now();
   const options = await discoverableOptions(req);
   await run("DELETE FROM webauthn_challenges WHERE expires_at <= ?", now);

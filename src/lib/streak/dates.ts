@@ -82,3 +82,38 @@ export function zonedTime(date: string, hour: number, minute: number, timeZone: 
   // A second pass settles daylight-saving transitions.
   return wall - offsetAt(guess, timeZone);
 }
+
+/**
+ * A usable IANA time zone name, canonicalised, or null. For a person's own zone
+ * as reported by their browser: anything Intl can't load is refused, so a junk
+ * value falls back to the portal's zone rather than being stored.
+ */
+export function validTimeZone(timeZone: unknown): string | null {
+  if (typeof timeZone !== "string" || !timeZone || timeZone.length > 64 || !/^[A-Za-z0-9_+\-/]+$/.test(timeZone)) return null;
+  try {
+    return new Intl.DateTimeFormat("en-US", { timeZone }).resolvedOptions().timeZone || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The first millisecond of a local date in `timeZone`. Where daylight saving
+ * skips midnight, the day starts at the first moment that exists.
+ */
+export function startOfDay(date: string, timeZone: string): number {
+  let at = zonedTime(date, 0, 0, timeZone);
+  for (let i = 0; i < 16 && localDate(at, timeZone) < date; i++) at += 15 * 60_000;
+  while (localDate(at - 60_000, timeZone) === date) at -= 60_000;
+  return at;
+}
+
+/** "Monday, Nov 23" for a local date ("YYYY-MM-DD"). */
+export function dueDayLabel(date: string): string {
+  return new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}

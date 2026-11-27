@@ -118,7 +118,7 @@ export const POST = api(async (req) => {
 
     case "send_password_reset": {
       if (target.suspendedAt !== null) return jsonError(409, "Lift the suspension first. Reset links don't work on suspended accounts.");
-      await sendPasswordResetEmail(req, target, now);
+      await sendPasswordResetEmail(req, target, now, { byAdmin: true });
       return done(`Sent a password reset link to ${target.email}. It works once and expires in 30 minutes.`);
     }
 
@@ -235,7 +235,7 @@ export const POST = api(async (req) => {
       // setPlan (PORTAL-STANDARD §4): today counts and the window restarts now. Doesn't use their restores.
       const result = (await adminSetStreak(actor, target, count, now))!;
       return done(
-        count === 0 ? "Streak reset to 0." : `Streak set to ${count}. Their 30-hour window starts now.`,
+        count === 0 ? "Streak reset to 0." : `Streak set to ${count}. Today counts, and the time they have to keep it starts again now.`,
         { from: result.from, to: count },
         {
           kind: "set_streak",

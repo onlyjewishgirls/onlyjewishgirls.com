@@ -15,7 +15,8 @@ export type Undo =
   | { kind: "set_role"; role: Role; after: { role: Role } }
   | { kind: "edit_profile"; profile: ProfileChanges; after: ProfileChanges }
   | { kind: "set_streak"; state: StreakState; event: StreakEvent | null; after: { count: number; lastActivityAt: number | null } }
-  | { kind: "set_note"; note: string | null; after: { note: string | null } };
+  | { kind: "set_note"; note: string | null; after: { note: string | null } }
+  | { kind: "set_time_zone"; timeZone: string; after: { timeZone: string } };
 
 /** The admin action an undo amounts to, for the permission check. */
 export function undoAction(undo: Undo): AdminAction {
@@ -143,6 +144,11 @@ export async function applyUndo(target: User, undo: Undo): Promise<string | null
     case "set_note":
       return applied(
         await run("UPDATE users SET admin_note = ? WHERE id = ? AND admin_note IS ?", undo.note, target.id, undo.after.note),
+      );
+
+    case "set_time_zone":
+      return applied(
+        await run("UPDATE users SET time_zone = ? WHERE id = ? AND time_zone IS ?", undo.timeZone, target.id, undo.after.timeZone),
       );
   }
 }

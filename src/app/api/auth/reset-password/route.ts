@@ -14,7 +14,7 @@ import { claimPasswordReset, findPasswordResetUser, resetPassword } from "@/serv
 
 export const POST = api(async (req) => {
   const limit = await rateLimit(`reset:ip:${clientIp(req)}`, 20, 60 * 60_000);
-  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds);
+  if (!limit.ok) return tooManyRequests(limit.retryAfterSeconds, null, "reset attempts", limit.firstRefusal);
 
   const body = await readJson(req);
   const tokenHash = hashResetToken(str(body.token));

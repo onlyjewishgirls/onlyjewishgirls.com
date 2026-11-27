@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { eventLabel, isWarningEvent } from "@/lib/admin/events";
+import { eventLabel, exportSentence, isWarningEvent } from "@/lib/admin/events";
 import { countryName, describeDevice, formatDateTime, timeAgo } from "@/lib/admin/format";
 import type { AdminEvent } from "@/server/admin";
 import { UndoButton } from "./UndoButton";
@@ -15,6 +15,7 @@ const METHOD_LABELS: Record<string, string> = {
 function describeDetail(event: AdminEvent): string | null {
   const d = event.detail;
   if (!d) return null;
+  if (event.type === "export") return exportSentence(d);
   if (typeof d.method === "string" && event.type === "signin.complete") return METHOD_LABELS[d.method] ?? null;
   if (typeof d.method === "string" && event.type === "signin.mfa_failed") {
     return `${d.method === "totp" ? "Authenticator code" : d.method === "passkey" ? "Passkey" : "Recovery code"}${d.context === "admin" ? " (admin re-check)" : ""}`;
@@ -65,6 +66,9 @@ export function EventList({
         const byAdmin = event.type.startsWith("admin.") && event.actorUsername && event.actorId !== event.userId;
         const detail = describeDetail(event);
         const where = [describeDevice(event.userAgent), countryName(event.country), event.ip].filter(Boolean).join(" · ");
+        const who = byAdmin
+          ? `${event.actorUsername} → ${event.username ?? "all accounts"}`
+          : (event.username ?? event.actorUsername ?? "");
         return (
           <li key={event.id} className="flex gap-3 py-3" data-event={event.type}>
             <span
@@ -72,37 +76,60 @@ export function EventList({
               className={`mt-1.5 size-2 shrink-0 rounded-full ${warning ? "bg-danger" : event.type.startsWith("admin.") ? "bg-brand" : "bg-border"}`}
             />
             <div className="min-w-0 flex-1 text-sm">
+              {/* data-export-*: each event is one row in an export (PORTAL-STANDARD §11). */}
               <p>
-                {byAdmin ? (
-                  <>
-                    <Person id={event.actorId} name={event.actorUsername} />
-                    <span className="text-muted"> → </span>
-                    {event.username ? <Person id={event.userId} name={event.username} /> : <span>all accounts</span>}
-                    <span className="text-muted">: </span>
-                  </>
-                ) : event.username ? (
-                  <>
-                    <Person id={event.userId} name={event.username} />
-                    <span className="text-muted">: </span>
-                  </>
-                ) : event.actorUsername ? (
-                  <>
-                    <Person id={event.actorId} name={event.actorUsername} />
-                    <span className="text-muted">: </span>
-                  </>
-                ) : null}
-                <span className={warning ? "font-medium text-danger" : ""}>{eventLabel(event.type)}</span>
-                {warning && <span className="sr-only"> (warning)</span>}
+                <span data-export-col="Who" data-export-text={who}>
+                  {byAdmin ? (
+                    <>
+                      <Person id={event.actorId} name={event.actorUsername} />
+                      <span className="text-muted"> → </span>
+                      {event.username ? <Person id={event.userId} name={event.username} /> : <span>all accounts</span>}
+                      <span className="text-muted">: </span>
+                    </>
+                  ) : event.username ? (
+                    <>
+                      <Person id={event.userId} name={event.username} />
+                      <span className="text-muted">: </span>
+                    </>
+                  ) : event.actorUsername ? (
+                    <>
+                      <Person id={event.actorId} name={event.actorUsername} />
+                      <span className="text-muted">: </span>
+                    </>
+                  ) : null}
+                </span>
+                <span className={warning ? "font-medium text-danger" : ""} data-export-col="Event">
+                  {eventLabel(event.type)}
+                </span>
+                {warning && (
+                  <span className="sr-only" data-export-col="Flag" data-export-text="Warning">
+                    {" "}
+                    (warning)
+                  </span>
+                )}
               </p>
-              {detail && <p className="mt-0.5 text-muted">{detail}</p>}
+              {detail && (
+                <p className="mt-0.5 text-muted" data-export-col="Detail">
+                  {detail}
+                </p>
+              )}
               <p className="mt-0.5 text-xs break-words text-muted">
-                <time dateTime={new Date(event.at).toISOString()} title={formatDateTime(event.at, timeZone)}>
+                <time
+                  dateTime={new Date(event.at).toISOString()}
+                  title={formatDateTime(event.at, timeZone)}
+                  data-export-col="When"
+                  data-export-text={formatDateTime(event.at, timeZone)}
+                >
                   {timeAgo(event.at, now, timeZone)}
                 </time>
-                {where && ` · ${where}`}
+                {where && <span data-export-col="Where" data-export-text={where}>{` · ${where}`}</span>}
               </p>
               {event.revertedAt !== null && (
-                <p className="mt-1 text-xs text-muted">
+                <p
+                  className="mt-1 text-xs text-muted"
+                  data-export-col="Undone"
+                  data-export-text={`By ${event.revertedBy ?? "the owner"}, ${formatDateTime(event.revertedAt, timeZone)}`}
+                >
                   ↩︎ Undone by {event.revertedBy ?? "the owner"} {timeAgo(event.revertedAt, now, timeZone)}
                 </p>
               )}

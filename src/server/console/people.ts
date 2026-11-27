@@ -13,21 +13,26 @@ import {
   type AdminAction,
 } from "@/lib/admin/permissions";
 import { sortMfa, type MfaKind } from "@/lib/mfa-order";
+import { validTimeZone } from "@/lib/streak/dates";
 import { MAX_SET_STREAK } from "@/lib/streak/restore";
+import type { Settings } from "@/lib/settings-schema";
 import { normalizeEmail, normalizeName, validateEmail, validateName, validatePhone, validateUsername } from "@/lib/validation";
 import { accountLock, listEvents } from "../admin";
 import { profileOf } from "../admin-undo";
 import { all, first, type Param } from "../db";
-import { APP_NAME, isLocalHost } from "../env";
+import { isLocalHost } from "../env";
 import { logEvent } from "../events";
 import { matchingRules } from "../ip-rules";
 import { LOGIN_ATTEMPTS_PER_WINDOW, loginAccountKey } from "../login-rules";
-import { deliverEmail, emailConfigured, simpleHtml } from "../mailer";
+import { composeMessageEmail, requestFacts } from "../account-mail";
+import { deliverEmail, emailConfigured, siteIdentity } from "../mailer";
 import { MFA_FAILURES_PER_HOUR, mfaFailureKey } from "../mfa-routes";
 import { sendPasswordResetEmail } from "../password-reset";
 import { hashPassword } from "../passwords";
 import { resetRateLimit } from "../rate-limit";
+import { getSettings } from "../settings";
 import { listSessions } from "../session";
+import { streakTimeZone } from "../location";
 import { adminSetStreak, currentRestorePlan, grantRestores, restoreQuota, streakStatusOf } from "../streak";
 import { generateTemporaryPassword } from "../temp-password";
 import {
@@ -52,6 +57,7 @@ import {
   toUser,
   unsuspendUser,
   updateProfile,
+  updateTimeZone,
   usernameTaken,
   type ProfileChanges,
   type User,
@@ -87,9 +93,9 @@ function mfaKinds(u: User, passkeys: number): MfaKind[] {
   return sortMfa(kinds);
 }
 
-export function summary(u: User, extras: Extras, now: number) {
+export function summary(u: User, extras: Extras, now: number, settings: Settings) {
   const status = statusOf(u, extras, now);
-  const streak = streakStatusOf(u, now);
+  const streak = streakStatusOf(u, settings, now);
   const complete = extras.passkeys > 0 && u.totpEnabledAt !== null && u.recoveryCodesCreatedAt !== null;
   const flags: string[] = [];
   if (u.mustChangePassword) flags.push("must_change_password");
@@ -122,6 +128,7 @@ export async function listPeople(ctx: ConsoleCtx) {
   need(ctx, "people.view");
   const { limit, offset } = pageParams(ctx);
   const now = ctx.now;
+  const settings = await getSettings();
   const where: string[] = [];
   const params: Param[] = [];
   const q = ctx.query.get("q")?.trim().toLowerCase();
@@ -190,7 +197,7 @@ export async function listPeople(ctx: ConsoleCtx) {
   return json({
     total,
     next_cursor: offset + rows.length < total ? String(offset + rows.length) : null,
-    items: rows.map((r) => summary(toUser(r)!, { passkeys: r.passkey_count, live: r.live, lockedByRate: r.rate_locked === 1 }, now)),
+    items: rows.map((r) => summary(toUser(r)!, { passkeys: r.passkey_count, live: r.live, lockedByRate: r.rate_locked === 1 }, now, settings)),
     filters: {
       statuses: [
         { value: "active", label: "Active" },
@@ -225,12 +232,13 @@ const SELF_REASONS: Partial<Record<AdminAction, string>> = {
   toggle_email_otp: "You can't change your own sign-in methods here.",
   set_streak: "Only the owner can set their own streak.",
   grant_restores: "Only the owner can grant restores to themselves.",
+  set_time_zone: "Only the owner can change their own streak time zone. Yours is taken from your browser when you sign in.",
 };
 
 function reasonFor(ctx: ConsoleCtx, action: AdminAction, target: User): string {
   if (ctx.me.id === target.id) return SELF_REASONS[action] ?? "Not on your own account.";
   if (target.role === "owner") return "Nobody can change the owner's account from the console.";
-  if ((action === "set_streak" || action === "grant_restores") && !ctx.caps.has("streaks.manage")) {
+  if ((action === "set_streak" || action === "grant_restores" || action === "set_time_zone") && !ctx.caps.has("streaks.manage")) {
     return "You need the streaks.manage permission (the owner can grant it).";
   }
   if (target.role === "admin") return "Only the owner can change admin accounts.";
@@ -264,13 +272,15 @@ function actionsFor(ctx: ConsoleCtx, target: User, status: string) {
     ip_block: ctx.caps.has("ips.manage") ? { allowed: true } : { allowed: false, reason: "Only the owner manages the IP lists." },
     streak_set: a("set_streak"),
     streak_grant: a("grant_restores"),
+    time_zone: a("set_time_zone"),
     email: a("send_email"),
   };
 }
 
 export async function streakView(target: User, now: number) {
-  const status = streakStatusOf(target, now);
-  const [quota, plan] = [await restoreQuota(target.id, now), currentRestorePlan(target, now)];
+  const settings = await getSettings();
+  const status = streakStatusOf(target, settings, now);
+  const [quota, plan] = [await restoreQuota(target.id, now), currentRestorePlan(target, settings, now)];
   return {
     current: status.count,
     longest: status.longest,
@@ -278,6 +288,8 @@ export async function streakView(target: User, now: number) {
     deadline: iso(status.deadline),
     expires_at: iso(status.deadline),
     leeway_for: status.leeway.map((l) => l.names.join(" · ")),
+    due_date: status.dueDate,
+    time_zone: streakTimeZone(target, settings.time_zone),
     hours_left: status.remainingMs === null ? null : Math.round((status.remainingMs / 3_600_000) * 10) / 10,
     restores_used: quota.used,
     restores_left: quota.left,
@@ -292,6 +304,7 @@ export async function getPerson(ctx: ConsoleCtx) {
   need(ctx, "people.view");
   const target = await loadTarget(ctx);
   const now = ctx.now;
+  const settings = await getSettings();
   const [passkeys, sessions, lock, events, codes, ips] = await Promise.all([
     listPasskeys(target.id),
     listSessions(target.id, now),
@@ -323,7 +336,7 @@ export async function getPerson(ctx: ConsoleCtx) {
   const ownerEdits = ctx.isOwner && ctx.me.id !== target.id && target.role !== "owner";
   return json({
     person: {
-      ...summary(target, { passkeys: passkeys.length, live: live.length, lockedByRate: lock.password || lock.twoStep }, now),
+      ...summary(target, { passkeys: passkeys.length, live: live.length, lockedByRate: lock.password || lock.twoStep }, now, settings),
       notes: target.adminNote,
       locked_until: target.lockedUntil && target.lockedUntil > now ? (target.lockedUntil >= FOREVER ? null : iso(target.lockedUntil)) : lock.password || lock.twoStep ? iso(now + lock.retryAfterSeconds * 1000) : null,
       must_change_password: target.mustChangePassword,
@@ -341,6 +354,7 @@ export async function getPerson(ctx: ConsoleCtx) {
       { key: "email", label: "Email", type: "email", value: target.email },
       { key: "phone", label: "Mobile (with country code)", type: "tel", value: target.phone, placeholder: "+12125551234" },
       { key: "staff_id", label: "Account ID", type: "text", value: String(target.id), editable: false },
+      timeZoneField(ctx, target, settings),
       { key: "notes", label: "Admin note (only admins see it)", type: "textarea", value: target.adminNote ?? "", optional: true, maxlength: 2000 },
     ],
     access: {
@@ -456,13 +470,71 @@ async function audited(
 
 type Fields = Record<string, string>;
 
+/** Every IANA zone this runtime knows, for the time-zone picker; the current one is always listed. */
+function timeZoneOptions(current: string) {
+  let zones: string[] = [];
+  try {
+    zones = Intl.supportedValuesOf("timeZone");
+  } catch {
+    zones = [];
+  }
+  if (!zones.includes("UTC")) zones = [...zones, "UTC"];
+  if (!zones.includes(current)) zones = [current, ...zones];
+  return zones.map((z) => ({ value: z, label: z.replace(/_/g, " ") }));
+}
+
+/** The person's own time zone: shown to anyone who can see the record, editable with set_time_zone. */
+function timeZoneField(ctx: ConsoleCtx, target: User, settings: Settings) {
+  const value = streakTimeZone(target, settings.time_zone);
+  const editable = can(ctx.me, "set_time_zone", target);
+  const known = validTimeZone(target.timeZone) !== null;
+  return {
+    key: "time_zone",
+    label: "Time zone (streak days)",
+    type: "timezone",
+    value,
+    options: timeZoneOptions(value),
+    editable,
+    description:
+      (known
+        ? "Taken from their browser each time they sign in. Their streak's days run midnight to midnight here."
+        : `Not known yet, so the portal's time zone (${settings.time_zone}) is used until they sign in.`) +
+      (editable ? " A change is audited and sends an alert." : ` ${reasonFor(ctx, "set_time_zone", target)}`),
+  };
+}
+
+/** PATCH { time_zone }: audited (with undo) and alerted like a streak change. */
+async function patchTimeZone(ctx: ConsoleCtx, target: User, raw: unknown, portalTimeZone: string) {
+  requireAction(ctx, "set_time_zone", target);
+  const timeZone = validTimeZone(raw);
+  if (!timeZone) {
+    const field = "time_zone";
+    const message = `"${String(raw ?? "").slice(0, 64)}" isn't a time zone this server knows. Pick one from the list, e.g. America/New_York.`;
+    throw err(400, "validation", message, { field, fields: { [field]: message } });
+  }
+  const before = streakTimeZone(target, portalTimeZone);
+  if (timeZone === target.timeZone) return;
+  await updateTimeZone(target.id, timeZone);
+  await audited(ctx, "admin.set_time_zone", target, { from: before, to: timeZone }, {
+    kind: "set_time_zone",
+    timeZone: target.timeZone,
+    after: { timeZone },
+  });
+  target.timeZone = timeZone;
+}
+
 export async function patchPerson(ctx: ConsoleCtx) {
   need(ctx, "people.edit");
   const target = await loadTarget(ctx);
-  requireAction(ctx, "edit_profile", target);
   const b = ctx.body;
   const has = (k: string) => Object.hasOwn(b, k);
   const s = (k: string) => (typeof b[k] === "string" ? (b[k] as string) : String(b[k] ?? ""));
+
+  if (has("time_zone")) {
+    await patchTimeZone(ctx, target, b.time_zone, (await getSettings()).time_zone);
+    if (Object.keys(b).length === 1) return json({ person: await freshSummary(target.id, ctx.now) });
+  }
+  requireAction(ctx, "edit_profile", target);
 
   if (has("notes") && Object.keys(b).length === 1) {
     const note = s("notes").trim().slice(0, 2000) || null;
@@ -530,7 +602,7 @@ async function freshSummary(id: number, now: number) {
   const u = (await findUserById(id))!;
   const [pk, lock] = await Promise.all([listPasskeys(id), accountLock(id, now)]);
   const live = (await listSessions(id, now)).filter((s) => s.stage === "full" && now - s.lastSeenAt <= IDLE_MS).length;
-  return summary(u, { passkeys: pk.length, live, lockedByRate: lock.password || lock.twoStep }, now);
+  return summary(u, { passkeys: pk.length, live, lockedByRate: lock.password || lock.twoStep }, now, await getSettings());
 }
 
 export async function createPerson(ctx: ConsoleCtx) {
@@ -692,7 +764,7 @@ export async function resetPassword(ctx: ConsoleCtx) {
   if (mode === "link") {
     requireAction(ctx, "send_password_reset", target);
     if (target.suspendedAt !== null) throw err(409, "conflict", "Lift the suspension first. Reset links don't work on suspended accounts.");
-    await sendPasswordResetEmail(ctx.req, target, ctx.now);
+    await sendPasswordResetEmail(ctx.req, target, ctx.now, { byAdmin: true });
     await audited(ctx, "admin.send_password_reset", target);
     return json({ emailed: true, note: `Sent a reset link to ${target.email}. It works once and expires in 30 minutes.` });
   }
@@ -812,10 +884,8 @@ export async function emailPerson(ctx: ConsoleCtx) {
   if (!subject) throw err(400, "validation", "Enter a subject.", { field: "subject" });
   if (!text) throw err(400, "validation", "Enter a message.", { field: "body" });
   const host = ctx.req.nextUrl.host;
-  const delivery = await deliverEmail(
-    { to: target.email, subject: `${subject} — ${APP_NAME}`, text, html: simpleHtml(text.split(/\n{2,}/)) },
-    { local: isLocalHost(host) },
-  );
+  const mail = composeMessageEmail(siteIdentity(), { username: target.username, subject, message: text, facts: await requestFacts(ctx.now) });
+  const delivery = await deliverEmail({ to: target.email, ...mail }, { local: isLocalHost(host) });
   await audited(ctx, "admin.send_email", target, { subject, delivered: delivery.ok, provider: delivery.provider });
   if (!delivery.ok) throw err(502, "delivery_failed", `The email to ${target.email} wasn't sent: ${delivery.error}`);
   return json({ delivery: "sent" });

@@ -1,11 +1,12 @@
 import "server-only";
-import { streakCalendar, type Place } from "@/lib/streak/calendar";
+import { streakCalendar, type Place, type StreakCalendar, type StreakRules } from "@/lib/streak/calendar";
+import type { Settings } from "@/lib/settings-schema";
 import { localDate } from "@/lib/streak/dates";
 import { getStreakStatus, recordActivity, type StreakStatus } from "@/lib/streak/engine";
 import { monthKey, restorePlan, setPlan, type RestorePlan } from "@/lib/streak/restore";
 import { batch, first } from "./db";
 import { logEvent } from "./events";
-import { storedPlace, syncPlace } from "./location";
+import { storedPlace, streakTimeZone, syncPlace } from "./location";
 import { getSettings } from "./settings";
 import { saveStreak, type StreakEvent, type User } from "./users";
 
@@ -14,16 +15,29 @@ export interface StreakCheckIn {
   /** What happened to the streak today (started / continued / restarted), if anything. */
   today: StreakEvent | null;
   place: Place;
+  /** The rules and time zone the streak was judged by. */
+  calendar: StreakCalendar;
   /** The moment of the check-in. */
   now: number;
 }
 
+/** The streak settings (Settings → Streaks) as the engine's rules. */
+export function streakRules(settings: Settings): StreakRules {
+  return { weekendGrace: settings.streak_weekend_grace, calendarDays: settings.streak_calendar_days };
+}
+
+/** A user's streak calendar from their stored place and time zone (falling back to the portal's). */
+export function storedCalendar(user: User, settings: Settings): StreakCalendar {
+  return streakCalendar(storedPlace(user, settings.time_zone), streakRules(settings));
+}
+
 /** Records that a fully signed-in user showed up, and returns their streak. */
 export async function checkIn(user: User, now = Date.now()): Promise<StreakCheckIn> {
-  const place = await syncPlace(user);
-  const calendar = streakCalendar(place);
+  const settings = await getSettings();
+  const place = await syncPlace(user, settings.time_zone);
+  const calendar = streakCalendar(place, streakRules(settings));
   const result = recordActivity(user.streak, now, calendar);
-  const date = localDate(now, user.timeZone);
+  const date = localDate(now, place.timeZone);
 
   let today = user.streakLastEvent?.date === date ? user.streakLastEvent : null;
   if (result.outcome !== "same-day") {
@@ -39,7 +53,7 @@ export async function checkIn(user: User, now = Date.now()): Promise<StreakCheck
     await saveStreak(user.id, result.state, user.streakLastEvent);
   }
 
-  return { status: getStreakStatus(result.state, now, calendar), today, place, now };
+  return { status: getStreakStatus(result.state, now, calendar), today, place, now, calendar };
 }
 
 // ---- Courtesy restores and admin set-streak (PORTAL-STANDARD §4) ----
@@ -68,8 +82,8 @@ export async function restoreQuota(userId: number, now = Date.now()): Promise<Re
 }
 
 /** What the user's own restore would do right now, from their stored place. */
-export function currentRestorePlan(user: User, now = Date.now()): RestorePlan | null {
-  return restorePlan(user.streak, user.streakLastEvent, now, streakCalendar(storedPlace(user)));
+export function currentRestorePlan(user: User, settings: Settings, now = Date.now()): RestorePlan | null {
+  return restorePlan(user.streak, user.streakLastEvent, now, storedCalendar(user, settings));
 }
 
 export type RestoreResult =
@@ -77,7 +91,7 @@ export type RestoreResult =
   | { ok: false; code: "nothing_to_restore" | "restores_off" | "no_restores_left"; error: string };
 
 export async function selfRestore(user: User, now = Date.now()): Promise<RestoreResult> {
-  const plan = currentRestorePlan(user, now);
+  const plan = currentRestorePlan(user, await getSettings(), now);
   const quota = await restoreQuota(user.id, now);
   const refuse = async (code: "nothing_to_restore" | "restores_off" | "no_restores_left", error: string): Promise<RestoreResult> => {
     await logEvent("streak.restore_refused", { user, detail: { code }, now });
@@ -126,9 +140,9 @@ export async function selfRestore(user: User, now = Date.now()): Promise<Restore
  */
 export async function adminSetStreak(actor: User, target: User, n: number, now = Date.now()) {
   const settings = await getSettings();
-  const state = setPlan(target.streak, n, now, target.timeZone);
+  const state = setPlan(target.streak, n, now, streakTimeZone(target, settings.time_zone));
   if (!state) return null;
-  const from = streakStatusOf(target, now).count;
+  const from = streakStatusOf(target, settings, now).count;
   await batch([
     [
       `UPDATE users SET streak_count = ?, streak_longest = ?, streak_last_activity_at = ?, streak_last_counted_date = ?,
@@ -178,6 +192,6 @@ export async function grantRestores(actor: User, target: User, extra: number, no
   return restoreQuota(target.id, now);
 }
 
-export function streakStatusOf(user: User, now = Date.now()): StreakStatus {
-  return getStreakStatus(user.streak, now, streakCalendar(storedPlace(user)));
+export function streakStatusOf(user: User, settings: Settings, now = Date.now()): StreakStatus {
+  return getStreakStatus(user.streak, now, storedCalendar(user, settings));
 }

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { ExportMenuSlot } from "./AdminExport";
 
 const TABS = [
   { href: "/admin/overview", label: "Overview", match: (p: string) => p === "/admin/overview" },
@@ -13,7 +14,8 @@ const TABS = [
 export function AdminNav() {
   const pathname = usePathname();
   return (
-    <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+    // data-export-skip: the nav isn't part of any page's exported data.
+    <div className="mb-6 flex flex-wrap items-center justify-between gap-3" data-export-skip="">
       <p className="text-xs font-semibold tracking-widest text-muted uppercase">
         Classic admin panel ·{" "}
         {/* The console is a plain page (a route handler), so a full navigation, not <Link>. */}
@@ -21,23 +23,26 @@ export function AdminNav() {
           Open the console
         </a>
       </p>
-      <nav aria-label="Admin sections" className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-1 text-sm">
-        {TABS.map((tab) => {
-          const active = tab.match(pathname);
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              aria-current={active ? "page" : undefined}
-              className={`shrink-0 rounded-lg px-3 py-1.5 font-medium transition ${
-                active ? "bg-brand text-white dark:text-[#10132a]" : "text-muted hover:bg-brand-soft hover:text-foreground"
-              }`}
-            >
-              {tab.label}
-            </Link>
-          );
-        })}
-      </nav>
+      <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+        <nav aria-label="Admin sections" className="flex max-w-full gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-1 text-sm">
+          {TABS.map((tab) => {
+            const active = tab.match(pathname);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                aria-current={active ? "page" : undefined}
+                className={`shrink-0 rounded-lg px-3 py-1.5 font-medium transition ${
+                  active ? "bg-brand text-white dark:text-[#10132a]" : "text-muted hover:bg-brand-soft hover:text-foreground"
+                }`}
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </nav>
+        <ExportMenuSlot />
+      </div>
     </div>
   );
 }

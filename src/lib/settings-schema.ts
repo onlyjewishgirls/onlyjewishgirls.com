@@ -5,7 +5,7 @@
 
 export interface SettingDef {
   key: string;
-  group: "streaks" | "auto_block" | "access" | "general";
+  group: "streaks" | "auto_block" | "access" | "captcha" | "general";
   label: string;
   description: string;
   type: "int" | "bool" | "select" | "timezone";
@@ -19,7 +19,11 @@ export interface SettingDef {
 }
 
 export const SETTING_GROUPS = [
-  { key: "streaks", label: "Streaks", description: "Courtesy restores for people who lost their 🔥 streak." },
+  {
+    key: "streaks",
+    label: "Streaks",
+    description: "How the 🔥 streak is judged, and courtesy restores for people who lost theirs. Shabbat and Yom Tov are always grace days.",
+  },
   {
     key: "auto_block",
     label: "Auto-blacklist",
@@ -27,6 +31,12 @@ export const SETTING_GROUPS = [
       "IP addresses that do something suspicious are taken off the allowlist, put on the deny list, and signed out, with no human step. An alert email goes out every time.",
   },
   { key: "access", label: "Access", description: "Who may sign in from where." },
+  {
+    key: "captcha",
+    label: "CAPTCHA wall",
+    description:
+      "Nothing on this site loads, for anyone, until the visitor solves a CAPTCHA. The owner, admins and allowlisted addresses solve it too. Visitors who haven't solved it are only counted: no alert emails, audit entries or blocks.",
+  },
   { key: "general", label: "General", description: "Time zone used for months, alerts and the console." },
 ] as const;
 
@@ -40,6 +50,24 @@ export const SETTINGS: SettingDef[] = [
     default: 3,
     min: 0,
     max: 31,
+  },
+  {
+    key: "streak_weekend_grace",
+    group: "streaks",
+    label: "Friday and Sunday are grace days",
+    description:
+      "On: the days people have to check in on are Monday to Thursday (minus Yom Tov). Skipping Friday or Sunday never breaks a streak, and checking in on one still counts a day. Off: only Shabbat and Yom Tov are grace days.",
+    type: "bool",
+    default: true,
+  },
+  {
+    key: "streak_calendar_days",
+    group: "streaks",
+    label: "Whole days in each person's time zone",
+    description:
+      "On: a streak lasts until the end of the next required day where the person is (any time Thursday, then any time Monday, keeps it), and never less than 30 hours. Off: 30 hours from the last check-in, moved past Shabbat and Yom Tov.",
+    type: "bool",
+    default: true,
   },
   {
     key: "auto_block_enabled",
@@ -86,9 +114,10 @@ export const SETTINGS: SettingDef[] = [
     key: "auto_block_accounts",
     group: "auto_block",
     label: "Different accounts tried from one IP",
-    description: "Block after failed sign-ins against this many different accounts (or unknown names) in the window.",
+    description:
+      "Block after failed sign-ins against this many different real accounts in the window. Set high enough for colleagues behind one office address who each mistype before signing in (a sign-in settles that account's earlier failures). Usernames that don't exist are counted separately: 3 of them block.",
     type: "int",
-    default: 3,
+    default: 5,
     min: 2,
     max: 1000,
   },
@@ -162,10 +191,23 @@ export const SETTINGS: SettingDef[] = [
     ],
   },
   {
+    key: "captcha_pass_hours",
+    group: "captcha",
+    label: "Pass lifetime",
+    description:
+      "How long one solved CAPTCHA lasts for one browser on one IP address. A new address (another network, a VPN) means a new CAPTCHA. Changes apply to passes issued from now on.",
+    type: "int",
+    default: 12,
+    min: 1,
+    max: 168,
+    unit: "hours",
+  },
+  {
     key: "time_zone",
     group: "general",
     label: "Portal time zone",
-    description: "Used for calendar months (streak restores) and the times in alert emails.",
+    description:
+      "Used for calendar months (streak restores), the times in alert emails, and the streak days of anyone whose own time zone isn't known.",
     type: "timezone",
     default: "America/New_York",
   },
@@ -217,6 +259,8 @@ export function coerceSetting(def: SettingDef, raw: unknown): { ok: true; value:
 
 export interface Settings {
   streak_restores: number;
+  streak_weekend_grace: boolean;
+  streak_calendar_days: boolean;
   auto_block_enabled: boolean;
   auto_block_window_minutes: number;
   auto_block_failed_passwords: number;
@@ -228,6 +272,7 @@ export interface Settings {
   auto_block_minutes: number;
   allowlist_mode: "off" | "admins" | "everyone";
   mfa_default_method: "passkey" | "totp";
+  captcha_pass_hours: number;
   time_zone: string;
 }
 
@@ -239,4 +284,17 @@ export function resolveSettings(stored: Record<string, unknown>): Settings {
     out[def.key] = parsed?.ok ? parsed.value : def.default;
   }
   return out as unknown as Settings;
+}
+
+/** The `settings` table's rows (values are JSON) resolved over the defaults. A corrupt row falls back to its default. */
+export function settingsFromRows(rows: { key: string; value: string }[]): Settings {
+  const stored: Record<string, unknown> = {};
+  for (const row of rows) {
+    try {
+      stored[row.key] = JSON.parse(row.value);
+    } catch {
+      // A corrupt row falls back to the default.
+    }
+  }
+  return resolveSettings(stored);
 }

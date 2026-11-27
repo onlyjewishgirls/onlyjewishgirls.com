@@ -1,11 +1,12 @@
 import "server-only";
-import { eventLabel, isWarningEvent } from "@/lib/admin/events";
+import { eventLabel, exportSentence, isWarningEvent } from "@/lib/admin/events";
 import { canRevert } from "@/lib/admin/permissions";
 import { listEvents, type AdminEvent } from "../admin";
 import { applyUndo, parseUndo, undoAction } from "../admin-undo";
 import { currentRouting, listAlerts, recordAndSend, type AlertRow } from "../alerts";
 import { all, first, run, type Param } from "../db";
 import { logEvent } from "../events";
+import { rateLimit } from "../rate-limit";
 import { findUserById } from "../users";
 import { err, idParam, iso, json, need, pageParams, type ConsoleCtx } from "./core";
 
@@ -14,12 +15,12 @@ import { err, idParam, iso, json, need, pageParams, type ConsoleCtx } from "./co
 function category(type: string): string {
   if (type.startsWith("signin.") || type === "signout") return "auth";
   if (type.startsWith("mfa.") || type.startsWith("password.")) return "auth";
-  if (type.startsWith("streak.") || type === "admin.set_streak" || type === "admin.grant_restores") return "streaks";
+  if (type.startsWith("streak.") || type === "admin.set_streak" || type === "admin.grant_restores" || type === "admin.set_time_zone") return "streaks";
   if (type.startsWith("security.") || type.startsWith("admin.ip_")) return "security";
   if (type === "admin.settings" || type === "admin.alert_test") return "settings";
   if (type === "admin.set_role" || type === "admin.set_permissions") return "roles";
   if (type === "admin.revoke_session" || type === "admin.sign_out_everywhere") return "sessions";
-  if (type === "admin.revert") return "audit";
+  if (type === "admin.revert" || type === "export") return "audit";
   return "people";
 }
 
@@ -42,6 +43,7 @@ function severity(type: string): "info" | "notice" | "warning" | "critical" {
 
 function sentence(e: AdminEvent): string {
   const d = e.detail ?? {};
+  if (e.type === "export") return exportSentence(d);
   const bits = Object.entries(d)
     .filter(([, v]) => v !== null && v !== undefined && (typeof v !== "object" || Array.isArray(v)))
     .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join("; ") : String(v)}`);
@@ -90,14 +92,14 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const CATEGORY_SQL: Record<string, string> = {
   auth: "(type LIKE 'signin.%' OR type = 'signout' OR type LIKE 'mfa.%' OR type LIKE 'password.%')",
-  streaks: "(type LIKE 'streak.%' OR type IN ('admin.set_streak', 'admin.grant_restores'))",
+  streaks: "(type LIKE 'streak.%' OR type IN ('admin.set_streak', 'admin.grant_restores', 'admin.set_time_zone'))",
   security: "(type LIKE 'security.%' OR type LIKE 'admin.ip_%')",
   settings: "type IN ('admin.settings', 'admin.alert_test')",
   roles: "type IN ('admin.set_role', 'admin.set_permissions')",
   sessions: "type IN ('admin.revoke_session', 'admin.sign_out_everywhere')",
-  audit: "type = 'admin.revert'",
+  audit: "type IN ('admin.revert', 'export')",
   people:
-    "(type LIKE 'admin.%' AND type NOT IN ('admin.set_streak','admin.grant_restores','admin.settings','admin.alert_test','admin.set_role','admin.set_permissions','admin.revoke_session','admin.sign_out_everywhere','admin.revert') AND type NOT LIKE 'admin.ip_%' OR type = 'account.created')",
+    "(type LIKE 'admin.%' AND type NOT IN ('admin.set_streak','admin.grant_restores','admin.set_time_zone','admin.settings','admin.alert_test','admin.set_role','admin.set_permissions','admin.revoke_session','admin.sign_out_everywhere','admin.revert') AND type NOT LIKE 'admin.ip_%' OR type = 'account.created')",
 };
 
 export async function listAudit(ctx: ConsoleCtx) {
@@ -232,6 +234,56 @@ export async function getAudit(ctx: ConsoleCtx) {
 export async function auditUnavailable(ctx: ConsoleCtx): Promise<Response> {
   need(ctx, "audit.view");
   throw err(404, "not_found", "This site's audit log has no hash chain to verify and no CSV export (features audit_verify / audit_export are off).");
+}
+
+// ---- Export audit (features.export_audit, PORTAL-STANDARD §11) ----
+
+export const EXPORT_FORMATS = ["txt", "json", "csv", "docx", "pdf", "html"] as const;
+const EXPORT_SECTION_MAX = 120;
+const EXPORT_TITLE_MAX = 300;
+const EXPORT_ROWS_MAX = 1_000_000_000;
+
+/** Control characters out, whitespace collapsed: these strings end up in the audit log and its exports. */
+const cleanText = (v: string) => v.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ").replace(/\s+/g, " ").trim();
+
+/**
+ * POST /exports: the kit (console.js, and export.js on the classic admin pages) reports
+ * each finished download, fire-and-forget. One audit entry (`export`, category "audit"),
+ * no security alert: exporting what an admin can already see isn't a security event.
+ */
+export async function recordExport(ctx: ConsoleCtx) {
+  const b = ctx.body;
+  if (typeof b.section !== "string" || !cleanText(b.section)) {
+    throw err(400, "validation", "Say which section was exported.", { field: "section" });
+  }
+  const section = cleanText(b.section);
+  if (section.length > EXPORT_SECTION_MAX) {
+    throw err(400, "validation", `The section name is longer than ${EXPORT_SECTION_MAX} characters.`, { field: "section" });
+  }
+  if (b.title !== undefined && b.title !== null && typeof b.title !== "string") {
+    throw err(400, "validation", "The title must be text.", { field: "title" });
+  }
+  const title = typeof b.title === "string" ? cleanText(b.title) : "";
+  if (title.length > EXPORT_TITLE_MAX) {
+    throw err(400, "validation", `The title is longer than ${EXPORT_TITLE_MAX} characters.`, { field: "title" });
+  }
+  const format = typeof b.format === "string" ? b.format.toLowerCase() : "";
+  if (!(EXPORT_FORMATS as readonly string[]).includes(format)) {
+    throw err(400, "validation", `The format must be one of ${EXPORT_FORMATS.join(", ")}.`, { field: "format" });
+  }
+  const rows = b.rows === undefined ? 0 : b.rows;
+  if (typeof rows !== "number" || !Number.isSafeInteger(rows) || rows < 0 || rows > EXPORT_ROWS_MAX) {
+    throw err(400, "validation", "The row count must be a whole number, 0 or more.", { field: "rows" });
+  }
+  // Generous (a busy hour is a few dozen), but it stops a script from flooding the audit log.
+  const limit = await rateLimit(`export:${ctx.me.id}`, 600, 60 * 60_000, ctx.now);
+  if (!limit.ok) throw err(429, "rate_limited", `That's 600 exports in an hour. Try again in ${Math.ceil(limit.retryAfterSeconds / 60)} min.`);
+  await logEvent("export", {
+    actor: { id: ctx.me.id, username: ctx.me.username },
+    detail: { section, ...(title ? { title } : {}), format, rows },
+    now: ctx.now,
+  });
+  return json({});
 }
 
 export async function recentSecurityEvents(limit = 15) {

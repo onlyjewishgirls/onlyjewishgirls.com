@@ -14,12 +14,14 @@ export interface RequestInfo {
   userAgent: string | null;
   country: string | null;
   city: string | null;
+  /** Cloudflare's region (state/province) estimate; shown in emails as part of the approximate location. */
+  region?: string | null;
 }
 
 /** Where the current request came from. Cloudflare sets CF-Connecting-IP and the cf location. */
 export async function requestInfo(): Promise<RequestInfo> {
   const h = await headers();
-  let cf: { country?: string; city?: string } | undefined;
+  let cf: { country?: string; city?: string; region?: string } | undefined;
   try {
     cf = getCloudflareContext().cf as typeof cf;
   } catch {
@@ -30,6 +32,7 @@ export async function requestInfo(): Promise<RequestInfo> {
     userAgent: h.get("user-agent")?.slice(0, 300) ?? null,
     country: cf?.country ?? null,
     city: cf?.city ?? null,
+    region: cf?.region ?? null,
   };
 }
 
@@ -78,6 +81,16 @@ export async function logEvent(
       options.undo ? JSON.stringify(options.undo) : null,
     );
     id = lastRowId;
+    // A successful sign-in shows the wrong passwords and codes for that account from this address were
+    // the owner's own typos: they stop counting towards the auto-blocker (§7). Other accounts' failures
+    // from the address, decoys, injections and refused admin requests keep counting.
+    if (type === "signin.complete" && options.user && info.ip) {
+      await run(
+        "DELETE FROM ip_strikes WHERE ip = ? AND subject = ? AND kind IN ('failed_password', 'failed_mfa')",
+        info.ip,
+        `u${options.user.id}`,
+      );
+    }
     if (now - lastPrunedAt > 60 * 60_000) {
       lastPrunedAt = now;
       await run("DELETE FROM events WHERE at < ?", now - RETENTION_MS);

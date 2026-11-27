@@ -1,6 +1,6 @@
 import "server-only";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
-import { MIGRATIONS } from "./schema";
+import { applyMigrations } from "./schema";
 
 /** Values D1 can bind. Booleans must be passed as 0/1. */
 export type Param = string | number | null;
@@ -8,32 +8,10 @@ export type Statement = [sql: string, ...params: Param[]];
 
 let migrated = false;
 
-async function currentVersion(d1: D1Database): Promise<number> {
-  const row = await d1.prepare("SELECT COALESCE(MAX(version), 0) AS v FROM schema_migrations").first<{ v: number }>();
-  return row?.v ?? 0;
-}
-
-async function migrate(d1: D1Database) {
-  await d1
-    .prepare("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)")
-    .run();
-  for (let version = await currentVersion(d1); version < MIGRATIONS.length; version++) {
-    try {
-      await d1.batch([
-        ...MIGRATIONS[version].map((sql) => d1.prepare(sql)),
-        d1.prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)").bind(version + 1, Date.now()),
-      ]);
-    } catch (error) {
-      // Another Worker instance may have applied this migration at the same moment.
-      if ((await currentVersion(d1)) <= version) throw error;
-    }
-  }
-}
-
 async function database(): Promise<D1Database> {
   const d1 = getCloudflareContext().env.DB;
   if (!migrated) {
-    await migrate(d1);
+    await applyMigrations(d1);
     migrated = true;
   }
   return d1;

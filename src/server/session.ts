@@ -4,6 +4,7 @@ import { randomToken, sha256 } from "./crypto";
 import { all, first, run } from "./db";
 import { isLocalHost, requestHost } from "./env";
 import { requestInfo } from "./events";
+import { checkCountry } from "./country-rule";
 import { denyingRule } from "./ip-rules";
 import { findUserById, type User } from "./users";
 
@@ -161,6 +162,9 @@ export async function getAuth(now = Date.now()): Promise<AuthContext | null> {
     await run("DELETE FROM sessions WHERE id_hash = ?", session.idHash);
     return null;
   }
+  // The country rule (PORTAL-STANDARD §9): account pages act signed out from a refused country.
+  // The session is kept; the exact error comes from the sign-in and admin routes.
+  if (!(await checkCountry(ip)).ok) return null;
   if (now - session.lastSeenAt > MINUTE) {
     await run("UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?", now, session.idHash);
   }

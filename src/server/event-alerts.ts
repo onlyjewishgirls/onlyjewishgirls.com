@@ -55,32 +55,44 @@ const ALERTS: Partial<Record<EventType, AlertEvent>> = {
   "admin.ip_deny_add": "ip_list_changed",
   "admin.ip_deny_update": "ip_list_changed",
   "admin.ip_unblock": "ip_list_changed",
+  "admin.country_rule": "ip_list_changed",
+  "signin.country_blocked": "country_blocked",
   "security.decoy": "decoy_hit",
   "security.admin_denied": "admin_access_denied",
   "admin.set_streak": "streak_set",
+  "admin.set_time_zone": "streak_set",
   "admin.settings": "settings_changed",
   // security.auto_blocked and security.hostile send their own, richer alerts (threat.ts).
 };
 
 /** Failed sign-ins dedupe per account + IP; everything else per account (or IP when there's none). */
 function dedupeKey(type: EventType, e: Logged, ip: string | null): string {
+  // One alert per refused country per 10 minutes (PORTAL-STANDARD §9).
+  if (type === "signin.country_blocked") return `country:${String(e.detail?.country ?? "?")}`;
   const who = e.user ? `u${e.user.id}` : typeof e.detail?.identifier === "string" ? `name:${e.detail.identifier}` : "-";
   if (type === "signin.failed" || type === "signin.unknown" || type === "signin.mfa_failed") return `${who}:${ip ?? "-"}`;
   if (type.startsWith("admin.ip_") || type.startsWith("security.")) return ip ?? who;
   return who;
 }
 
+/** "Wrong password (account miriam)." in plain words; the detail fields go in the details list. */
 function describe(type: EventType, e: Logged): string {
   const label = eventLabel(type);
   const target = e.user?.username;
   const actor = e.actor && e.actor.id !== e.user?.id ? e.actor.username : null;
-  const extra = e.detail
-    ? Object.entries(e.detail)
-        .filter(([, v]) => v !== null && v !== undefined && typeof v !== "object")
-        .map(([k, v]) => `${k}=${String(v)}`)
-        .join(", ")
-    : "";
-  return `${label}${target ? ` — account ${target}` : ""}${actor ? `, by ${actor}` : ""}${extra ? ` (${extra})` : ""}.`;
+  return `${label}${target ? ` (account ${target})` : ""}${actor ? `, by ${actor}` : ""}.`;
+}
+
+/** The event's detail fields as "Label: value" lines, e.g. identifier → "Identifier: miriam". */
+function detailRows(e: Logged): [string, string][] {
+  if (!e.detail) return [];
+  return Object.entries(e.detail)
+    .filter(([, v]) => v !== null && v !== undefined && typeof v !== "object")
+    .slice(0, 12)
+    .map(([k, v]) => {
+      const label = k.replace(/_/g, " ");
+      return [label.charAt(0).toUpperCase() + label.slice(1), String(v).slice(0, 300)];
+    });
 }
 
 export async function alertForEvent(type: EventType, e: Logged) {
@@ -89,7 +101,10 @@ export async function alertForEvent(type: EventType, e: Logged) {
     user: e.user ?? null,
     actor: e.actor ?? null,
     ip,
-    country: e.info.country,
+    // The location is the request's, so it is only shown when the alert's address is the request's too.
+    country: ip === e.info.ip ? e.info.country : null,
+    city: ip === e.info.ip ? e.info.city : null,
+    region: ip === e.info.ip ? (e.info.region ?? null) : null,
     userAgent: e.info.userAgent,
     auditId: e.id,
     now: e.now,
@@ -100,7 +115,7 @@ export async function alertForEvent(type: EventType, e: Logged) {
   }
   const event = ALERTS[type];
   if (!event) return;
-  await securityAlert({ ...base, event, title: eventLabel(type), key: dedupeKey(type, e, ip), what: describe(type, e) });
+  await securityAlert({ ...base, event, title: eventLabel(type), key: dedupeKey(type, e, ip), what: describe(type, e), details: detailRows(e) });
 }
 
 /** New device / IP / country, and every successful admin sign-in. */

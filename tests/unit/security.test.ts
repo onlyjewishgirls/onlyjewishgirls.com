@@ -83,7 +83,7 @@ describe("suspicious activity (§7)", () => {
       auto_block_window_minutes: 15,
       auto_block_failed_passwords: 5,
       auto_block_failed_mfa: 5,
-      auto_block_accounts: 3,
+      auto_block_accounts: 5,
       auto_block_admin_denied: 3,
       auto_block_rate_limits: 3,
       auto_block_minutes: 0,
@@ -93,12 +93,13 @@ describe("suspicious activity (§7)", () => {
     });
   });
 
-  const zero = { failed_password: 0, failed_mfa: 0, accounts: 0, admin_denied: 0, rate_limit: 0, decoy: 0, injection: 0 };
+  const zero = { failed_password: 0, failed_mfa: 0, accounts: 0, unknown_names: 0, admin_denied: 0, rate_limit: 0, decoy: 0, injection: 0 };
   it("crosses each threshold at the default count, not before", () => {
     const cases: [Partial<typeof zero>, Partial<typeof zero>, string][] = [
       [{ failed_password: 4 }, { failed_password: 5 }, "failed_logins"],
       [{ failed_mfa: 4 }, { failed_mfa: 5 }, "failed_mfa"],
-      [{ accounts: 2, failed_password: 2 }, { accounts: 3, failed_password: 3 }, "multi_account"],
+      [{ accounts: 4, failed_password: 4 }, { accounts: 5, failed_password: 4 }, "multi_account"],
+      [{ unknown_names: 2, failed_password: 2 }, { unknown_names: 3, failed_password: 3 }, "multi_account"],
       [{ admin_denied: 2 }, { admin_denied: 3 }, "admin_denied"],
       [{ rate_limit: 2 }, { rate_limit: 3 }, "rate_limit"],
       [{}, { decoy: 1 }, "decoy"],

@@ -3,14 +3,15 @@ import type { NextRequest } from "next/server";
 import { randomInt } from "node:crypto";
 import { sha256 } from "./crypto";
 import { batch, first, run } from "./db";
-import { APP_NAME, isLocalHost } from "./env";
-import { deliverEmail, emailConfigured, simpleHtml } from "./mailer";
+import { composeCodeEmail, requestFacts } from "./account-mail";
+import { isLocalHost } from "./env";
+import { deliverEmail, emailConfigured, siteIdentity } from "./mailer";
 import type { User } from "./users";
 
 /**
  * Email codes, the third second factor (PORTAL-STANDARD §3: passkey, authenticator
  * app, email). 6 digits, 10 minutes, single use, stored only as a hash. Sent through
- * the existing Resend/Plunk transport; never offered when email isn't configured.
+ * the existing Plunk transport; never offered when email isn't configured.
  */
 export const EMAIL_CODE_MINUTES = 10;
 export const EMAIL_CODES_PER_HOUR = 5;
@@ -68,14 +69,9 @@ export async function sendEmailCode(req: NextRequest, user: User, now = Date.now
       now + EMAIL_CODE_MINUTES * 60_000,
     ],
   ]);
-  const lines = [
-    `Your ${APP_NAME} sign-in code is ${code}.`,
-    `It works once and expires in ${EMAIL_CODE_MINUTES} minutes. If you didn't just sign in, someone has your password: change it now.`,
-  ];
-  const delivery = await deliverEmail(
-    { to: user.email, subject: `${code} is your ${APP_NAME} sign-in code`, text: `${lines.join("\n\n")}\n`, html: simpleHtml(lines) },
-    { local: isLocalHost(new URL(req.url).host) },
-  );
+  // Sent at once: sign-in codes are never delayed or digested.
+  const mail = composeCodeEmail(siteIdentity(), { username: user.username, code, minutes: EMAIL_CODE_MINUTES, facts: await requestFacts(now) });
+  const delivery = await deliverEmail({ to: user.email, ...mail }, { local: isLocalHost(new URL(req.url).host) });
   if (!delivery.ok) return { ok: false, code: "delivery_failed", error: `The code couldn't be emailed: ${delivery.error}` };
   return { ok: true, to: user.email };
 }

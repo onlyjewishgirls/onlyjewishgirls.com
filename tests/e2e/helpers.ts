@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import path from "node:path";
-import { expect, type Page } from "@playwright/test";
+import { expect, type BrowserContext, type Page } from "@playwright/test";
 import { base32Decode, hotp, totpStep } from "../../src/server/totp";
-import { E2E_DATA_DIR } from "../../playwright.config";
+import { E2E_DATA_DIR, E2E_ORIGIN } from "../../playwright.config";
 
 const shots = process.env.SCREENSHOT_DIR;
 export async function screenshot(page: Page, name: string) {
@@ -109,4 +109,17 @@ export async function blockPasskeyAutofill(page: Page, blocked = true) {
       ? route.fulfill({ status: 200, contentType: "application/json", body: "{}" })
       : route.continue(),
   );
+}
+
+/**
+ * A CAPTCHA pass (PORTAL-STANDARD §10) for a context with its own User-Agent: the one from
+ * global-setup.ts is bound to the Desktop Chrome UA. Test keys accept the dummy token on localhost.
+ */
+export async function passCaptcha(context: BrowserContext, userAgent: string) {
+  const res = await context.request.post(`${E2E_ORIGIN}/__gate/verify`, {
+    form: { token: "XXXX.DUMMY.TOKEN.XXXX", return: "/" },
+    headers: { Origin: E2E_ORIGIN, "User-Agent": userAgent },
+    maxRedirects: 0,
+  });
+  expect(res.status()).toBe(303);
 }

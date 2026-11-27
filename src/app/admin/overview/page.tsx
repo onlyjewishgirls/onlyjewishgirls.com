@@ -5,7 +5,7 @@ import { EventList } from "@/components/admin/EventList";
 import { StatTile } from "@/components/admin/StatTile";
 import { compactNumber, fullName } from "@/lib/admin/format";
 import { dashboardStats, requireAdminPage } from "@/server/admin";
-import { cfEnv } from "@/server/env";
+import { emailConfigured } from "@/server/mailer";
 import { visitsToday } from "@/server/visits";
 
 export const metadata: Metadata = { title: "Admin · OnlyJewishGirls", robots: { index: false } };
@@ -13,12 +13,11 @@ export const metadata: Metadata = { title: "Admin · OnlyJewishGirls", robots: {
 export default async function AdminOverviewPage() {
   const { user, now } = await requireAdminPage();
   const [stats, visits] = await Promise.all([dashboardStats(user.timeZone, now), visitsToday(now)]);
-  const env = cfEnv();
 
   const incomplete = stats.totalUsers - stats.twoStepComplete;
   const warnings: { text: string; href?: string }[] = [];
-  if (!(env.EMAIL_API_KEY || env.PLUNK_API_KEY) || !env.EMAIL_FROM) {
-    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add EMAIL_API_KEY or PLUNK_API_KEY, and EMAIL_FROM, to the Worker." });
+  if (!emailConfigured()) {
+    warnings.push({ text: "Emails aren't set up, so password reset links can't be sent. Add the PLUNK_API_KEY secret to the Worker." });
   }
   if (stats.lockedNow > 0) {
     warnings.push({
@@ -53,7 +52,7 @@ export default async function AdminOverviewPage() {
                 {w.text}
               </p>
               {w.href && (
-                <Link href={w.href} className="link shrink-0">
+                <Link href={w.href} className="link shrink-0" data-export-skip="">
                   View
                 </Link>
               )}
@@ -121,15 +120,25 @@ export default async function AdminOverviewPage() {
           {stats.topStreaks.length === 0 ? (
             <p className="text-sm text-muted">No live streaks right now.</p>
           ) : (
-            <ol className="space-y-2 text-sm">
+            <ol className="space-y-2 text-sm" aria-label="Longest live streaks">
               {stats.topStreaks.map(({ user: u, status }, i) => (
                 <li key={u.id} className="flex items-center gap-3">
-                  <span className="tabular w-5 text-muted">{i + 1}.</span>
+                  <span className="tabular w-5 text-muted" data-export-col="Rank" data-export-text={String(i + 1)}>
+                    {i + 1}.
+                  </span>
                   <Link href={`/admin/users/${u.id}`} className="min-w-0 flex-1 truncate hover:underline">
-                    <span className="font-medium">{u.username}</span>{" "}
-                    <span className="text-muted">{fullName(u)}</span>
+                    <span className="font-medium" data-export-col="Username">
+                      {u.username}
+                    </span>{" "}
+                    <span className="text-muted" data-export-col="Name">
+                      {fullName(u)}
+                    </span>
                   </Link>
-                  <span className="tabular font-semibold">
+                  <span
+                    className="tabular font-semibold"
+                    data-export-col="Streak"
+                    data-export-text={`${status.count}${status.atRisk ? " (at risk)" : ""}`}
+                  >
                     {status.count} {status.atRisk ? "⌛" : "🔥"}
                   </span>
                 </li>
@@ -143,7 +152,7 @@ export default async function AdminOverviewPage() {
             <h2 id="recent-title" className="font-semibold">
               Recent activity
             </h2>
-            <Link href="/admin/activity" className="link text-sm">
+            <Link href="/admin/activity" className="link text-sm" data-export-skip="">
               See all
             </Link>
           </div>

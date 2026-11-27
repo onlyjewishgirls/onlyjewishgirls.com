@@ -5,6 +5,7 @@ import { first } from "@/server/db";
 import { logEvent } from "@/server/events";
 import { api, clientIp, fail, readJson } from "@/server/http";
 import { isAllowlisted } from "@/server/ip-rules";
+import { captureTimeZone } from "@/server/location";
 import { mfaState, nextStep } from "@/server/mfa";
 import { startSession } from "@/server/session";
 import { getSettings } from "@/server/settings";
@@ -73,6 +74,7 @@ export const POST = api(async (req) => {
     return fail(401, "passkey_failed", check.reason);
   }
   const now = Date.now();
+  await captureTimeZone(user);
   await startSession(user.id, "full", now);
   await setLastLogin(user.id, now);
   await logEvent("signin.complete", { user, detail: { method: "passkey_usernameless" }, now });

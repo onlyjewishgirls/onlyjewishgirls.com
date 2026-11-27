@@ -8,7 +8,9 @@ export async function postJson<T = Record<string, unknown>>(url: string, body: u
   try {
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      // The browser's time zone rides along so a sign-in can record it for the
+      // streak's day boundaries (server/location.ts captureTimeZone).
+      headers: { "Content-Type": "application/json", "X-Time-Zone": browserTimeZone() },
       body: JSON.stringify(body),
     });
     const data = (await res.json().catch(() => ({}))) as ApiResult<T>["data"];
