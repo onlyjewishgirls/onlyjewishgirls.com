@@ -67,6 +67,8 @@
   // sender name and subject tag, the legal name, website and support address in the footer, and the
   // support address as the reply-to. Defaults in code match these.
   "vars": {
+    // Public CAPTCHA site key (widget created 2026-11-27); the secret is TURNSTILE_SECRET_KEY.
+    "TURNSTILE_SITE_KEY": "0x4AAAAAAGVY3lsXn2xzJ6K0",
     "ALERTS_EMAIL_FROM": "securityalerts@onlyjewishgirls.com",
     "ALERTS_EMAIL_TO": "soc@onlyjewishgirls.com",
     "MAIL_BUSINESS_NAME": "OnlyJewishGirls",
