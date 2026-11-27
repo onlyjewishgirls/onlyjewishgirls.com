@@ -1624,7 +1624,7 @@
   'use strict';
   if (window.ConsoleKit && window.ConsoleKit.loaded) return;
 
-  var VERSION = '1.1.2';
+  var VERSION = '1.1.3';
   // The Export menu (export.js, embedded at the top of this file).
   var EXPORT = window.ConsoleExport || null;
   var CFG = {};
@@ -2485,10 +2485,10 @@
   }
 
   /** Show a one-time secret in its own modal. */
-  function showOnce(title, value, note) {
+  function showOnce(title, value, note, after) {
     var L = layer({ title: title });
     L.body.appendChild(oneTime(title, value, note));
-    L.foot.appendChild(btn('I have saved it', { onClick: function () { L.close(true); } }));
+    L.foot.appendChild(btn('I have saved it', { onClick: function () { L.close(true); if (after) after(); } }));
   }
 
   /**
@@ -3760,14 +3760,20 @@
         ];
       }
       return formDialog({ title: 'Add ' + noun(), wide: true, fields: fields, submitLabel: 'Create account',
-        intro: 'This creates the account straight away. To let them set their own password instead, send an invitation.',
+        intro: feat('invitations') && has('invites.manage')
+          ? 'This creates the account straight away. To let them set their own password instead, send an invitation.'
+          : 'This creates the account straight away.',
         submit: function (v) { return api('POST', '/people', v); } });
     }).then(function (res) {
       if (!res) return;
       toast('Account created.', 'ok');
-      if (res.temporary_password) showOnce('Temporary password', String(res.temporary_password), 'Read it to them. They choose their own at first sign-in.');
       if (PEOPLE.reloadList) PEOPLE.reloadList();
-      if (res.person && res.person.id) go(hashFor('people', [res.person.id], PEOPLE.filters));
+      var id = (res.person && res.person.id) || res.id;
+      var open = function () { if (id) go(hashFor('people', [id], PEOPLE.filters)); };
+      // Opening the new record closes every dialog, so a temporary password is
+      // shown first and the record opens only once it has been saved.
+      if (res.temporary_password) showOnce('Temporary password', String(res.temporary_password), 'Read it to them. They choose their own at first sign-in.', open);
+      else open();
     }, function (e) { fail(null, e); });
   }
 
